@@ -20,16 +20,17 @@ import (
 )
 
 type Config struct {
-	TelegramEnabled bool     `json:"telegramEnabled"`
-	TelegramToken   string   `json:"telegramToken"`
-	TelegramChatID  string   `json:"telegramChatId"`
-	NostrEnabled    bool     `json:"nostrEnabled"`
-	NostrRelays     []string `json:"nostrRelays"`
-	NostrRecipient  string   `json:"nostrRecipient"`
-	NostrSenderName string   `json:"nostrSenderName"`
-	NostrSenderNsec string   `json:"nostrSenderNsec"`
-	NostrSenderNpub string   `json:"nostrSenderNpub"`
-	NostrAvatar     string   `json:"nostrAvatar"`
+	TelegramEnabled       bool     `json:"telegramEnabled"`
+	TelegramToken         string   `json:"telegramToken"`
+	TelegramChatID        string   `json:"telegramChatId"`
+	NostrEnabled          bool     `json:"nostrEnabled"`
+	NostrRelays           []string `json:"nostrRelays"`
+	NostrRecipient        string   `json:"nostrRecipient"`
+	NostrSenderName       string   `json:"nostrSenderName"`
+	NostrSenderNsec       string   `json:"nostrSenderNsec"`
+	NostrSenderNpub       string   `json:"nostrSenderNpub"`
+	NostrAvatar           string   `json:"nostrAvatar"`
+	NostrProfilePublished bool     `json:"nostrProfilePublished"`
 }
 type Sender struct {
 	Path string
@@ -71,12 +72,56 @@ func (s Sender) EnsureIdentity() (Config, error) {
 	styles := []string{"bottts", "identicon", "shapes", "rings", "thumbs"}
 	sum := sha256.Sum256([]byte(pk))
 	c.NostrAvatar = "https://api.dicebear.com/9.x/" + styles[int(sum[0])%len(styles)] + "/svg?seed=" + url.QueryEscape(c.NostrSenderNpub)
-	b, _ := json.MarshalIndent(c, "", "  ")
-	tmp := s.Path + ".tmp"
-	if e = os.WriteFile(tmp, b, 0600); e != nil {
-		return c, e
+	return c, s.save(c)
+}
+func (s Sender) save(c Config) error {
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
 	}
-	return c, os.Rename(tmp, s.Path)
+	tmp := s.Path + ".tmp"
+	if err = os.WriteFile(tmp, b, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.Path)
+}
+
+func (s Sender) EnsureProfile(ctx context.Context, c Config) (Config, error) {
+	if !c.NostrEnabled || c.NostrProfilePublished {
+		return c, nil
+	}
+	if len(c.NostrRelays) == 0 {
+		return c, errors.New("Nostr relays missing for sender profile")
+	}
+	prefix, secret, err := nip19.Decode(c.NostrSenderNsec)
+	if err != nil || prefix != "nsec" {
+		return c, errors.New("invalid sender nsec")
+	}
+	kr, err := keyer.NewPlainKeySigner(secret.(string))
+	if err != nil {
+		return c, err
+	}
+	metadata, _ := json.Marshal(map[string]string{"name": c.NostrSenderName, "display_name": c.NostrSenderName, "picture": c.NostrAvatar, "about": "Private Bitcoin activity alerts from s-watcher"})
+	pubkey, _ := kr.GetPublicKey(ctx)
+	profile := nostr.Event{PubKey: pubkey, CreatedAt: nostr.Now(), Kind: nostr.KindProfileMetadata, Content: string(metadata)}
+	if err = kr.SignEvent(ctx, &profile); err != nil {
+		return c, err
+	}
+	pool := nostr.NewSimplePool(ctx)
+	defer pool.Close("profile published")
+	published := false
+	for _, relayURL := range c.NostrRelays {
+		if relay, relayErr := pool.EnsureRelay(relayURL); relayErr == nil {
+			if relay.Publish(ctx, profile) == nil {
+				published = true
+			}
+		}
+	}
+	if !published {
+		return c, errors.New("could not publish sender profile to any configured relay")
+	}
+	c.NostrProfilePublished = true
+	return c, s.save(c)
 }
 func (s Sender) Telegram(ctx context.Context, c Config, message string) error {
 	if !c.TelegramEnabled {
@@ -119,16 +164,6 @@ func (s Sender) Nostr(ctx context.Context, c Config, message string) error {
 	}
 	pool := nostr.NewSimplePool(ctx)
 	defer pool.Close("notification complete")
-	metadata, _ := json.Marshal(map[string]string{"name": c.NostrSenderName, "display_name": c.NostrSenderName, "picture": c.NostrAvatar, "about": "Private Bitcoin activity alerts from s-watcher"})
-	pubkey, _ := kr.GetPublicKey(ctx)
-	profile := nostr.Event{PubKey: pubkey, CreatedAt: nostr.Now(), Kind: nostr.KindProfileMetadata, Content: string(metadata)}
-	if signErr := kr.SignEvent(ctx, &profile); signErr == nil {
-		for _, relayURL := range c.NostrRelays {
-			if relay, relayErr := pool.EnsureRelay(relayURL); relayErr == nil {
-				_ = relay.Publish(ctx, profile)
-			}
-		}
-	}
 	their := nip17.GetDMRelays(ctx, rv.(string), pool, c.NostrRelays)
 	if len(their) == 0 {
 		return errors.New("recipient has no NIP-17 kind 10050 relay list")

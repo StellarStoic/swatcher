@@ -1,0 +1,39 @@
+import { createHash, randomBytes } from 'node:crypto'
+import { schnorr } from '@noble/curves/secp256k1'
+import { bech32 } from '@scure/base'
+
+const avatarStyles = ['bottts', 'identicon', 'shapes', 'rings', 'thumbs']
+const nameAlphabet = 'abcdefghjkmnpqrstuvwxyz23456789'
+
+function decodeNsec(nsec: string): Uint8Array {
+  const decoded = bech32.decodeToBytes(nsec)
+  if (decoded.prefix !== 'nsec' || decoded.bytes.length !== 32) {
+    throw new Error('Nostr sender key must be a valid nsec')
+  }
+  schnorr.getPublicKey(decoded.bytes)
+  return decoded.bytes
+}
+
+export function uniqueSenderName(): string {
+  const entropy = randomBytes(6)
+  let suffix = ''
+  for (const byte of entropy) suffix += nameAlphabet[byte % nameAlphabet.length]
+  return `swatcher-${suffix}`
+}
+
+export function ensureNostrIdentity(existingNsec: string): {
+  nsec: string
+  npub: string
+  avatar: string
+} {
+  const secret = existingNsec
+    ? decodeNsec(existingNsec)
+    : schnorr.utils.randomSecretKey()
+  const publicKey = schnorr.getPublicKey(secret)
+  const nsec = bech32.encodeFromBytes('nsec', secret)
+  const npub = bech32.encodeFromBytes('npub', publicKey)
+  const styleIndex = createHash('sha256').update(publicKey).digest()[0]
+  const style = avatarStyles[styleIndex % avatarStyles.length]
+  const avatar = `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(npub)}`
+  return { nsec, npub, avatar }
+}

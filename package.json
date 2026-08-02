@@ -7,6 +7,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "@scure/base": "^1.2.6",
     "@start9labs/start-sdk": "2.0.9"
   },
   "devDependencies": {

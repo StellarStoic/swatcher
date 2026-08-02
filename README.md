@@ -73,6 +73,10 @@ press **Start** in the bot's private chat once before it can send alerts. Nostr
 accepts discovery relays and a
 recipient npub, generates a dedicated nsec/npub when first enabled, and permits
 replacing that nsec later. Disabling Nostr does not delete its sender identity.
+Generation and public-key derivation happen immediately when the action is
+saved; the npub is displayed while the persisted nsec remains masked. A stable
+randomized default name such as `swatcher-k7m2qd` is generated and published
+with the DiceBear avatar as a kind 0 profile before any alert is required.
 
 The recipient ID can be read directly from the Bot API `getUpdates` response;
 the complete token-safe command is documented in `instructions.md`. Telegram

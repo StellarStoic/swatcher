@@ -1,4 +1,5 @@
 import { notificationConfig } from '../fileModels/notifications.json'
+import { ensureNostrIdentity, uniqueSenderName } from '../nostrIdentity'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
@@ -37,7 +38,7 @@ const inputSpec = InputSpec.of({
   nostrSenderName: Value.text({
     name: 'Sender name',
     required: true,
-    default: 's-watcher',
+    default: 'swatcher',
   }),
   nostrSenderNsec: Value.text({
     name: 'Sender nsec',
@@ -78,7 +79,7 @@ export const notifications = sdk.Action.withInput(
       nostrEnabled: c?.nostrEnabled ?? false,
       nostrRelays: c?.nostrRelays.join('\n') || null,
       nostrRecipient: c?.nostrRecipient || null,
-      nostrSenderName: c?.nostrSenderName || 's-watcher',
+      nostrSenderName: c?.nostrSenderName || 'swatcher',
       nostrSenderNsec: c?.nostrSenderNsec || null,
       nostrSenderNpub: c?.nostrSenderNpub || null,
     } satisfies NotificationInput
@@ -86,6 +87,27 @@ export const notifications = sdk.Action.withInput(
   async ({ effects, input }) => {
     const previous = await notificationConfig.read().once()
     const suppliedNsec = input.nostrSenderNsec?.trim() ?? ''
+    const selectedNsec = suppliedNsec || previous?.nostrSenderNsec || ''
+    const identity =
+      input.nostrEnabled || selectedNsec
+        ? ensureNostrIdentity(selectedNsec)
+        : null
+    const requestedName = input.nostrSenderName.trim()
+    const previousName = previous?.nostrSenderName || ''
+    const previousNameIsDefault =
+      previousName === 's-watcher' || previousName === 'swatcher'
+    const requestedNameIsDefault =
+      requestedName === 's-watcher' || requestedName === 'swatcher'
+    const senderName =
+      (!previousNameIsDefault && previousName) ||
+      (requestedName && !requestedNameIsDefault
+        ? requestedName
+        : uniqueSenderName())
+    const effectiveName =
+      requestedName && !requestedNameIsDefault ? requestedName : senderName
+    const identityChanged = identity?.npub !== (previous?.nostrSenderNpub || '')
+    const profileChanged =
+      effectiveName !== previous?.nostrSenderName || identityChanged
     await notificationConfig.write(effects, {
       telegramEnabled: input.telegramEnabled,
       telegramToken: input.telegramToken?.trim() ?? '',
@@ -96,16 +118,14 @@ export const notifications = sdk.Action.withInput(
         .map((x) => x.trim())
         .filter(Boolean),
       nostrRecipient: input.nostrRecipient?.trim() ?? '',
-      nostrSenderName: input.nostrSenderName.trim(),
-      nostrSenderNsec: suppliedNsec || previous?.nostrSenderNsec || '',
-      nostrSenderNpub:
-        suppliedNsec === previous?.nostrSenderNsec
-          ? (previous?.nostrSenderNpub ?? '')
-          : '',
-      nostrAvatar:
-        suppliedNsec === previous?.nostrSenderNsec
-          ? (previous?.nostrAvatar ?? '')
-          : '',
+      nostrSenderName: effectiveName,
+      nostrSenderNsec: identity?.nsec ?? '',
+      nostrSenderNpub: identity?.npub ?? '',
+      nostrAvatar: identity?.avatar ?? '',
+      nostrProfilePublished:
+        profileChanged || !input.nostrEnabled
+          ? false
+          : (previous?.nostrProfilePublished ?? false),
     })
   },
 )

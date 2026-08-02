@@ -399,13 +399,27 @@ func (a *App) deliverPending() {
 		log.Printf("notification configuration: %v", err)
 		return
 	}
+	if c.NostrEnabled && !c.NostrProfilePublished {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		updated, profileErr := a.notifier.EnsureProfile(ctx, c)
+		cancel()
+		if profileErr != nil {
+			log.Printf("Nostr sender profile: %v", profileErr)
+		} else {
+			c = updated
+		}
+	}
 	a.mu.RLock()
 	events := append([]Event(nil), a.state.Events...)
 	groups := append([]WatchGroup(nil), a.state.Groups...)
 	a.mu.RUnlock()
 	labels := map[string]string{}
 	for _, g := range groups {
-		if g.Category != "" { labels[g.ID] = g.Category + " / " + g.Label } else { labels[g.ID] = g.Label }
+		if g.Category != "" {
+			labels[g.ID] = g.Category + " / " + g.Label
+		} else {
+			labels[g.ID] = g.Label
+		}
 	}
 	for _, event := range events {
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {

@@ -65,12 +65,14 @@ Groups are optional: to notify several people, add the bot to a group, send
 Avoid third-party “ID finder” bots. The bot token is a secret: revoke it with
 `@BotFather` if it is ever exposed.
 
-When Nostr is first enabled without a sender nsec, s-watcher generates a
-dedicated persistent nsec/npub. Reopen the action after the service starts to
-view them. The sender name can be changed, and supplying a different valid nsec
-changes the sender identity. Disabling Nostr preserves the keys. A DiceBear
-avatar style is chosen deterministically from several styles and published with
-the sender profile.
+When Nostr is first enabled without a sender nsec, the action immediately
+generates and persists a dedicated nsec/npub. The generated npub appears when
+the action saves; the nsec field is populated but remains masked as a secret.
+The default sender name is a unique `swatcher-xxxxxx` name and can be changed.
+Supplying a different valid nsec immediately changes the sender identity.
+Disabling Nostr preserves the keys. A DiceBear avatar style is selected
+deterministically, and the name and avatar are published as the sender's Nostr
+profile without waiting for the first Bitcoin alert.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.
