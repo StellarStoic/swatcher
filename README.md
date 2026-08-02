@@ -73,14 +73,13 @@ press **Start** in the bot's private chat once before it can send alerts. Nostr
 accepts discovery relays and a
 recipient npub, generates a dedicated nsec/npub when first enabled, and permits
 the service to retain that identity when disabled. The random private sender
-key is managed internally and is not exposed as an editable action field.
+key is shown masked in a disabled field; both key fields are read-only.
 Generation and public-key derivation happen immediately when the action is
 saved; the npub is displayed while the persisted nsec is not returned to the
 UI. A stable randomized default name such as `swatcher-k7m2qd` is generated and
-published
-with the DiceBear avatar as a kind 0 profile before any alert is required. The
-generated avatar URL is visible as a read-only field in the Notifications
-action.
+published with a DiceBear Pixelbot avatar as a kind 0 profile before any alert
+is required. The actual image is rendered in the s-watcher Web UI instead of
+showing its URL as a configuration field.
 
 Saving Notifications immediately sends a one-time test message through each
 enabled channel. Per-channel pending state is persisted so failures retry while

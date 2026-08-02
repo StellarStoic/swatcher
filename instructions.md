@@ -78,14 +78,14 @@ Avoid third-party “ID finder” bots. The bot token is a secret: revoke it wit
 `@BotFather` if it is ever exposed.
 
 When Nostr is first enabled, the action immediately generates and persists a
-dedicated nsec/npub. The generated npub appears when
-the action saves. The private sender key is generated randomly, stored
-internally, and never exposed as an editable UI field. The default sender name
+dedicated nsec/npub. Both keys appear as disabled fields after the action saves;
+the nsec is masked and neither key can be changed. The private sender key is
+generated randomly and stored internally. The default sender name
 is a unique `swatcher-xxxxxx` name and can be changed. Disabling Nostr preserves
-the identity. A DiceBear avatar style is selected deterministically. Its
-read-only URL appears in **Sender avatar URL**, and the name and avatar are
-published as the sender's Nostr profile without waiting for the first Bitcoin
-alert.
+the identity. A DiceBear Pixelbot avatar is generated from the npub and rendered
+in the s-watcher Web UI; its URL is not shown as a form field. The name and
+avatar are published as the sender's Nostr profile without waiting for the
+first Bitcoin alert.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.

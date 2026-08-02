@@ -82,6 +82,13 @@ type groupView struct {
 type pageData struct {
 	Groups []groupView
 	Events []Event
+	Nostr  *nostrIdentityView
+}
+
+type nostrIdentityView struct {
+	Name   string
+	Npub   string
+	Avatar string
 }
 
 type App struct {
@@ -125,6 +132,9 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	data := pageData{Groups: a.groupViewsLocked(), Events: append([]Event(nil), a.state.Events...)}
 	a.mu.RUnlock()
+	if c, err := a.notifier.Load(); err == nil && c.NostrEnabled && c.NostrSenderNpub != "" {
+		data.Nostr = &nostrIdentityView{Name: c.NostrSenderName, Npub: c.NostrSenderNpub, Avatar: c.NostrAvatar}
+	}
 	sort.Slice(data.Events, func(i, j int) bool { return data.Events[i].SeenAt.After(data.Events[j].SeenAt) })
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.tmpl.Execute(w, data); err != nil {
@@ -593,7 +603,7 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https://api.dicebear.com data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }

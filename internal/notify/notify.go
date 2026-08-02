@@ -3,7 +3,6 @@ package notify
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,9 +70,7 @@ func (s Sender) EnsureIdentity() (Config, error) {
 		return c, e
 	}
 	c.NostrSenderNpub, _ = nip19.EncodePublicKey(pk)
-	styles := []string{"bottts", "identicon", "shapes", "rings", "thumbs"}
-	sum := sha256.Sum256([]byte(pk))
-	c.NostrAvatar = "https://api.dicebear.com/9.x/" + styles[int(sum[0])%len(styles)] + "/svg?seed=" + url.QueryEscape(c.NostrSenderNpub)
+	c.NostrAvatar = "https://api.dicebear.com/10.x/pixelbot/svg?seed=" + url.QueryEscape(c.NostrSenderNpub)
 	return c, s.save(c)
 }
 func (s Sender) save(c Config) error {

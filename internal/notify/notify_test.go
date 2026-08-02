@@ -37,7 +37,7 @@ func TestEnsureIdentityGeneratesAndPersistsNostrKeys(t *testing.T) {
 	if prefix, _, err := nip19.Decode(first.NostrSenderNsec); err != nil || prefix != "nsec" {
 		t.Fatalf("invalid generated nsec: %v", err)
 	}
-	if !strings.Contains(first.NostrAvatar, "api.dicebear.com/9.x/") {
+	if !strings.Contains(first.NostrAvatar, "api.dicebear.com/10.x/pixelbot/svg") {
 		t.Fatalf("unexpected avatar: %s", first.NostrAvatar)
 	}
 	second, err := sender.EnsureIdentity()

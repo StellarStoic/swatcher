@@ -1,8 +1,7 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { schnorr } from '@noble/curves/secp256k1'
 import { bech32 } from '@scure/base'
 
-const avatarStyles = ['bottts', 'identicon', 'shapes', 'rings', 'thumbs']
 const nameAlphabet = 'abcdefghjkmnpqrstuvwxyz23456789'
 
 function decodeNsec(nsec: string): Uint8Array {
@@ -32,8 +31,6 @@ export function ensureNostrIdentity(existingNsec: string): {
   const publicKey = schnorr.getPublicKey(secret)
   const nsec = bech32.encodeFromBytes('nsec', secret)
   const npub = bech32.encodeFromBytes('npub', publicKey)
-  const styleIndex = createHash('sha256').update(publicKey).digest()[0]
-  const style = avatarStyles[styleIndex % avatarStyles.length]
-  const avatar = `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(npub)}`
+  const avatar = `https://api.dicebear.com/10.x/pixelbot/svg?seed=${encodeURIComponent(npub)}`
   return { nsec, npub, avatar }
 }

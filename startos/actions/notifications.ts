@@ -48,22 +48,22 @@ const inputSpec = InputSpec.of({
     required: true,
     default: 'swatcher',
   }),
-  nostrSenderNpub: Value.text({
+  nostrSenderNsec: Value.dynamicText(async () => ({
+    name: 'Sender private key (nsec)',
+    description:
+      'Generated and retained by s-watcher for use in another Nostr client',
+    required: false,
+    default: null,
+    masked: true,
+    disabled: 'Generated sender keys cannot be changed',
+  })),
+  nostrSenderNpub: Value.dynamicText(async () => ({
     name: 'Sender public key (npub)',
-    description:
-      'Generated after saving with Nostr enabled; the private key is managed internally',
+    description: 'Generated after saving with Nostr enabled',
     required: false,
     default: null,
-    immutable: true,
-  }),
-  nostrAvatar: Value.text({
-    name: 'Sender avatar URL',
-    description:
-      'Generated after saving with Nostr enabled and published in the Nostr profile',
-    required: false,
-    default: null,
-    immutable: true,
-  }),
+    disabled: 'Generated sender keys cannot be changed',
+  })),
 })
 type NotificationInput = typeof inputSpec._TYPE
 
@@ -92,8 +92,8 @@ export const notifications = sdk.Action.withInput(
           : defaultNostrRelays.join('\n'),
       nostrRecipient: c?.nostrRecipient || null,
       nostrSenderName: c?.nostrSenderName || 'swatcher',
+      nostrSenderNsec: c?.nostrSenderNsec || null,
       nostrSenderNpub: c?.nostrSenderNpub || null,
-      nostrAvatar: c?.nostrAvatar || null,
     } satisfies NotificationInput
   },
   async ({ effects, input }) => {
