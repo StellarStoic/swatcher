@@ -94,10 +94,14 @@ showing its URL as a configuration field. StartOS 0.4 action forms do not
 provide an inline image field, so the Notifications action cannot render the
 avatar between its text inputs.
 
-Saving Notifications only persists the settings. The separate **Test
-Telegram** and **Test Nostr** actions send the test message on demand and report
+Saving Notifications only persists the settings. The separate **Send Telegram
+test message** and **Send Nostr test message** actions send on demand and report
 delivery failures immediately; configuration saves and service restarts never
 send test messages automatically.
+
+Each channel's test action is hidden until that channel has been enabled and
+saved. Enabled test actions are grouped under their corresponding Telegram or
+Nostr notification channel instead of appearing before Notifications setup.
 
 At container startup, a minimal bootstrap step grants the unprivileged
 `swatcher` process ownership of `/data`. The service then drops privileges

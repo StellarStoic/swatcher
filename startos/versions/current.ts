@@ -1,12 +1,10 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:7',
+  version: '0.1.0:8',
   releaseNotes: {
-    en_US:
-      'Improves watch editing, group suggestions, validation, and sorting.',
-    de_DE:
-      'Verbessert Bearbeitung, Gruppenvorschläge, Validierung und Sortierung.',
+    en_US: 'Shows notification test actions only for enabled channels.',
+    de_DE: 'Zeigt Benachrichtigungstests nur für aktivierte Kanäle an.',
   },
   migrations: {
     up: async () => {},
