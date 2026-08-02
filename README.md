@@ -85,6 +85,11 @@ Saving Notifications immediately sends a one-time test message through each
 enabled channel. Per-channel pending state is persisted so failures retry while
 successful test deliveries are not duplicated.
 
+At container startup, a minimal bootstrap step grants the unprivileged
+`swatcher` process ownership of `/data`. The service then drops privileges
+before starting, allowing it to atomically update files created by StartOS
+actions without running the application as root.
+
 The recipient ID can be read directly from the Bot API `getUpdates` response;
 the complete token-safe command is documented in `instructions.md`. Telegram
 groups remain an optional destination and use their negative chat ID.

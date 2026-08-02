@@ -142,6 +142,5 @@ export const notifications = sdk.Action.withInput(
       telegramTestPending: input.telegramEnabled,
       nostrTestPending: input.nostrEnabled,
     })
-    await sdk.restart(effects)
   },
 )

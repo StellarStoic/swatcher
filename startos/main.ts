@@ -21,7 +21,12 @@ export const main = sdk.setupMain(async ({ effects }) => {
       's-watcher',
     ),
     exec: {
-      command: ['s-watcher'],
+      command: [
+        'sh',
+        '-c',
+        'chown swatcher:swatcher /data && exec su-exec swatcher s-watcher',
+      ],
+      user: 'root',
       env: {
         SWATCHER_LISTEN: `:${uiPort}`,
         SWATCHER_DATA: '/data',
