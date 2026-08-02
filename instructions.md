@@ -39,6 +39,32 @@ Open the StartOS **Notifications** action to configure either channel:
   All private messages use NIP-17 gift wrapping. The receiver must publish a
   kind 10050 DM relay list discoverable from the configured relays.
 
+### Finding a Telegram private group ID
+
+1. Create the bot with `@BotFather`, then add that bot to the private group.
+2. In the group, send a command addressed to the bot, such as
+   `/start@your_bot_username`. This creates an update the bot is allowed to
+   receive even when BotFather privacy mode is enabled.
+3. On a trusted computer with `curl` and `jq`, run the commands below. Paste
+   the BotFather token only at the hidden prompt; do not put it directly in the
+   command or share the command output.
+
+   ```sh
+   read -rsp "Telegram bot token: " SWATCHER_TG_TOKEN; echo
+   curl --silent --show-error "https://api.telegram.org/bot${SWATCHER_TG_TOKEN}/getUpdates" \
+     | jq -r '.result[] | (.message.chat // .my_chat_member.chat // .channel_post.chat) | select(.type == "group" or .type == "supergroup") | "\(.title)\t\(.id)"'
+   unset SWATCHER_TG_TOKEN
+   ```
+
+4. Copy the numeric ID shown beside the group name into **Telegram chat ID**.
+   Private group IDs are negative; migrated supergroups commonly begin with
+   `-100`. Keep the minus sign.
+
+If nothing is returned, confirm the bot is still in the group, send another
+command mentioning its exact username, and run the command again. Avoid adding
+public “ID finder” bots to a private group. The bot token is a secret: revoke it
+with `@BotFather` if it is ever exposed.
+
 When Nostr is first enabled without a sender nsec, s-watcher generates a
 dedicated persistent nsec/npub. Reopen the action after the service starts to
 view them. The sender name can be changed, and supplying a different valid nsec

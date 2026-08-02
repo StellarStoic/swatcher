@@ -13,6 +13,8 @@ const inputSpec = InputSpec.of({
   }),
   telegramChatId: Value.text({
     name: 'Telegram chat ID',
+    description:
+      'Private groups use a negative ID, commonly -100…; see Instructions for the Bot API lookup steps',
     required: false,
     default: null,
   }),
