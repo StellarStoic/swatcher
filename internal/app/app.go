@@ -83,6 +83,7 @@ type groupView struct {
 	DisplaySource  string
 	DisplayBalance string
 	LastActivity   time.Time
+	ActivitySignal string
 }
 
 type eventView struct {
@@ -183,10 +184,14 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 		for i := range data.Groups {
 			if data.Groups[i].ID == event.GroupID && event.SeenAt.After(data.Groups[i].LastActivity) {
 				data.Groups[i].LastActivity = event.SeenAt
+				data.Groups[i].ActivitySignal = movementSignal(event)
 			}
 		}
 	}
 	for i := range data.Groups {
+		if data.Groups[i].ActivitySignal == "" {
+			data.Groups[i].ActivitySignal = "idle"
+		}
 		data.Groups[i].DisplaySource = data.Groups[i].Source
 		data.Groups[i].DisplayBalance = fmt.Sprintf("%d sat", data.Groups[i].Confirmed)
 		if data.Groups[i].Unconfirmed != 0 {
@@ -863,6 +868,17 @@ func eventAmount(event Event) string {
 		return fmt.Sprintf("net %d sat · in %d / out %d", event.Net, event.Received, event.Sent)
 	default:
 		return "—"
+	}
+}
+
+func movementSignal(event Event) string {
+	switch {
+	case event.Received > event.Sent:
+		return "received"
+	case event.Sent > event.Received:
+		return "sent"
+	default:
+		return "idle"
 	}
 }
 

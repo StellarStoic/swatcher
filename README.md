@@ -21,6 +21,8 @@ Licensed under the GNU Affero General Public License v3.0 only.
   transactions as received, sent, or self-transfer, and show exact amounts.
 - Keep watch names and groups as read-only summaries until explicitly edited,
   suggest existing groups, and sort watches by six useful criteria.
+- Show a gray, green, or red activity rail on each watch row based on its latest
+  detected net movement.
 - Update mempool events when they receive a block confirmation.
 - Show balance and newly detected activity in a local web UI.
 - Persist watches and events in `/data/state.json`.
@@ -47,6 +49,11 @@ Watch names and groups accept lowercase ASCII letters and numbers only
 editing a watch. The watch list can be sorted by stack size, name, group, date
 added, latest detected activity, or address type. Editing is opt-in per row;
 Cancel restores the saved values without a request.
+
+Each watch row has a slim activity rail: gray means no detected movement or a
+net-neutral transaction, green means the latest transaction added sats, and
+red means it drained sats. The rail reflects the latest detected event for the
+whole watch group.
 
 ## Architecture
 

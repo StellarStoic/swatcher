@@ -31,6 +31,23 @@ func TestDirection(t *testing.T) {
 	}
 }
 
+func TestMovementSignal(t *testing.T) {
+	tests := []struct {
+		event Event
+		want  string
+	}{
+		{Event{Received: 2, Sent: 1}, "received"},
+		{Event{Received: 1, Sent: 2}, "sent"},
+		{Event{Received: 1, Sent: 1}, "idle"},
+		{Event{}, "idle"},
+	}
+	for _, test := range tests {
+		if got := movementSignal(test.event); got != test.want {
+			t.Fatalf("movementSignal(%+v) = %q, want %q", test.event, got, test.want)
+		}
+	}
+}
+
 func TestWatchSortModes(t *testing.T) {
 	older := time.Unix(100, 0)
 	newer := time.Unix(200, 0)
@@ -76,6 +93,9 @@ func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
 	}
 	if !strings.Contains(body, maskIdentifier(address)) || !strings.Contains(body, maskIdentifier(strings.Repeat("a", 64))) {
 		t.Fatalf("privacy response did not retain four-character edges: %s", body)
+	}
+	if !strings.Contains(body, "signal-received") {
+		t.Fatalf("latest received activity did not render a green signal: %s", body)
 	}
 }
 
