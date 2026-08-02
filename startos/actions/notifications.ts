@@ -51,7 +51,7 @@ const inputSpec = InputSpec.of({
   nostrSenderNsec: Value.dynamicText(async () => ({
     name: 'Sender private key (nsec)',
     description:
-      'Generated and retained by s-watcher for use in another Nostr client',
+      'Generated and retained by s-watcher for use in another Nostr client. Will appear after save if Nostr is enabled.',
     required: false,
     default: null,
     masked: true,
@@ -59,7 +59,7 @@ const inputSpec = InputSpec.of({
   })),
   nostrSenderNpub: Value.dynamicText(async () => ({
     name: 'Sender public key (npub)',
-    description: 'Generated after saving with Nostr enabled',
+    description: 'Will appear after save if Nostr is enabled.',
     required: false,
     default: null,
     disabled: 'Generated sender keys cannot be changed',

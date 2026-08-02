@@ -85,7 +85,9 @@ is a unique `swatcher-xxxxxx` name and can be changed. Disabling Nostr preserves
 the identity. A DiceBear Pixelbot avatar is generated from the npub and rendered
 in the s-watcher Web UI; its URL is not shown as a form field. The name and
 avatar are published as the sender's Nostr profile without waiting for the
-first Bitcoin alert.
+first Bitcoin alert. Open the s-watcher Web Interface to see the generated
+Pixelbot avatar; StartOS 0.4 action forms cannot display an inline image in the
+Notifications settings.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.

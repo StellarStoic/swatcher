@@ -79,7 +79,9 @@ saved; the npub is displayed while the persisted nsec is not returned to the
 UI. A stable randomized default name such as `swatcher-k7m2qd` is generated and
 published with a DiceBear Pixelbot avatar as a kind 0 profile before any alert
 is required. The actual image is rendered in the s-watcher Web UI instead of
-showing its URL as a configuration field.
+showing its URL as a configuration field. StartOS 0.4 action forms do not
+provide an inline image field, so the Notifications action cannot render the
+avatar between its text inputs.
 
 Saving Notifications only persists the settings. The separate **Test
 Telegram** and **Test Nostr** actions send the test message on demand and report
