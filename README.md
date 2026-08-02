@@ -19,6 +19,8 @@ Licensed under the GNU Affero General Public License v3.0 only.
 - Resolve transaction inputs and outputs through Electrs.
 - Consolidate activity across every derived address in a watch, classify new
   transactions as received, sent, or self-transfer, and show exact amounts.
+- Keep watch names and groups as read-only summaries until explicitly edited,
+  suggest existing groups, and sort watches by six useful criteria.
 - Update mempool events when they receive a block confirmation.
 - Show balance and newly detected activity in a local web UI.
 - Persist watches and events in `/data/state.json`.
@@ -39,6 +41,12 @@ SegWit respectively, while descriptors are authoritative. Duplicate addresses
 and overlapping wallet imports are rejected without changing the watch list and
 explained in an in-interface modal. Hardened derivation below an xpub is
 rejected because it is not mathematically possible.
+
+Watch names and groups accept lowercase ASCII letters and numbers only
+(`[a-z0-9]+`). Existing valid group names appear as suggestions when adding or
+editing a watch. The watch list can be sorted by stack size, name, group, date
+added, latest detected activity, or address type. Editing is opt-in per row;
+Cancel restores the saved values without a request.
 
 ## Architecture
 

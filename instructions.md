@@ -33,6 +33,12 @@ If an address or any derived wallet address is already covered by an existing
 watch, s-watcher adds nothing and identifies the conflicting watch in a modal.
 This prevents duplicated activity notifications.
 
+Names and groups may contain only lowercase letters `a-z` and numbers `0-9`.
+Previously saved valid groups appear as suggestions in the group field. In the
+watch list, select **Edit** to reveal the name and group inputs, **Save** to
+apply them, or **Cancel** to discard the unsaved values. Use **Sort by** to
+order watches by stack size, name, group, date added, latest change, or type.
+
 s-watcher checks your local Electrs service for confirmed and unconfirmed
 activity. Transactions touching multiple addresses in an imported wallet are
 combined into one event with exact received, sent, or self-transfer amounts.

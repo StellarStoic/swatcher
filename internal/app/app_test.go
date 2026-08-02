@@ -31,6 +31,29 @@ func TestDirection(t *testing.T) {
 	}
 }
 
+func TestWatchSortModes(t *testing.T) {
+	older := time.Unix(100, 0)
+	newer := time.Unix(200, 0)
+	tests := map[string]string{
+		"balance":  "b",
+		"name":     "b",
+		"group":    "b",
+		"date":     "b",
+		"activity": "a",
+		"type":     "b",
+	}
+	for mode, want := range tests {
+		groups := []groupView{
+			{WatchGroup: WatchGroup{ID: "a", Label: "beta", Category: "zeta", ScriptType: "legacy", CreatedAt: older}, Confirmed: 1, LastActivity: newer},
+			{WatchGroup: WatchGroup{ID: "b", Label: "alpha", Category: "alpha", ScriptType: "address", CreatedAt: newer}, Confirmed: 2, LastActivity: older},
+		}
+		sortGroups(groups, mode)
+		if groups[0].ID != want {
+			t.Fatalf("sort %s placed %s first, want %s", mode, groups[0].ID, want)
+		}
+	}
+}
+
 func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {
@@ -102,7 +125,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{
-		"label":          {"Test wallet"},
+		"label":          {"testwallet"},
 		"source":         {public.String()},
 		"script_type":    {"native-segwit"},
 		"count":          {"2"},
@@ -121,7 +144,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Test wallet") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "testwallet") || !strings.Contains(response.Body.String(), "Sort by") || !strings.Contains(response.Body.String(), ">Edit<") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
@@ -132,8 +155,8 @@ func TestDuplicateWatchReturnsJSONConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{
-		"label":    {"Donation address"},
-		"category": {"Donations"},
+		"label":    {"donationaddress"},
+		"category": {"donations"},
 		"source":   {"1BoatSLRHtKNngkdXEeobR76b53LETtpyT"},
 	}
 	for attempt := 0; attempt < 2; attempt++ {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,6 +82,7 @@ type groupView struct {
 	LastError      string
 	DisplaySource  string
 	DisplayBalance string
+	LastActivity   time.Time
 }
 
 type eventView struct {
@@ -90,11 +92,15 @@ type eventView struct {
 }
 
 type pageData struct {
-	Groups      []groupView
-	Events      []eventView
-	Nostr       *nostrIdentityView
-	PrivacyMode bool
+	Groups           []groupView
+	Events           []eventView
+	Nostr            *nostrIdentityView
+	PrivacyMode      bool
+	SortMode         string
+	GroupSuggestions []string
 }
+
+var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9]+$`)
 
 type nostrIdentityView struct {
 	Name   string
@@ -151,7 +157,21 @@ func (a *App) Run(listen string) error {
 
 func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode}
+	sortMode := r.URL.Query().Get("sort")
+	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
+		sortMode = "activity"
+	}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, SortMode: sortMode}
+	suggestions := map[string]bool{}
+	for _, group := range a.state.Groups {
+		if watchMetadataPattern.MatchString(group.Category) {
+			suggestions[group.Category] = true
+		}
+	}
+	for suggestion := range suggestions {
+		data.GroupSuggestions = append(data.GroupSuggestions, suggestion)
+	}
+	sort.Strings(data.GroupSuggestions)
 	for _, event := range a.state.Events {
 		view := eventView{Event: event, DisplayTxID: event.TxID}
 		view.DisplayAmount = eventAmount(event)
@@ -160,6 +180,11 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			view.DisplayAmount = legacyMask(8)
 		}
 		data.Events = append(data.Events, view)
+		for i := range data.Groups {
+			if data.Groups[i].ID == event.GroupID && event.SeenAt.After(data.Groups[i].LastActivity) {
+				data.Groups[i].LastActivity = event.SeenAt
+			}
+		}
 	}
 	for i := range data.Groups {
 		data.Groups[i].DisplaySource = data.Groups[i].Source
@@ -173,6 +198,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.mu.RUnlock()
+	sortGroups(data.Groups, sortMode)
 	if c, err := a.notifier.Load(); err == nil && c.NostrEnabled && c.NostrSenderNpub != "" {
 		npub := c.NostrSenderNpub
 		if data.PrivacyMode {
@@ -276,17 +302,17 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	label := strings.TrimSpace(r.FormValue("label"))
 	category := strings.TrimSpace(r.FormValue("category"))
 	if label == "" {
-		label = "Bitcoin address"
+		label = "bitcoinaddress"
 	}
-	if len(label) > 80 {
-		writeFormError(w, r, http.StatusBadRequest, "The watch name is too long.")
+	if len(label) > 80 || !watchMetadataPattern.MatchString(label) {
+		writeFormError(w, r, http.StatusBadRequest, "The watch name may contain only lowercase letters and numbers.")
 		return
 	}
 	if category == "" {
-		category = "Uncategorized"
+		category = "uncategorized"
 	}
-	if len(category) > 60 {
-		writeFormError(w, r, http.StatusBadRequest, "The group name is too long.")
+	if len(category) > 60 || !watchMetadataPattern.MatchString(category) {
+		writeFormError(w, r, http.StatusBadRequest, "The group name may contain only lowercase letters and numbers.")
 		return
 	}
 	groupID := randomID()
@@ -399,8 +425,8 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	label := strings.TrimSpace(r.FormValue("label"))
 	category := strings.TrimSpace(r.FormValue("category"))
-	if label == "" || len(label) > 80 || category == "" || len(category) > 60 {
-		http.Error(w, "name and category are required and must fit their limits", http.StatusBadRequest)
+	if label == "" || len(label) > 80 || !watchMetadataPattern.MatchString(label) || category == "" || len(category) > 60 || !watchMetadataPattern.MatchString(category) {
+		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only lowercase letters and numbers.")
 		return
 	}
 	a.mu.Lock()
@@ -414,7 +440,7 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !found {
-		http.Error(w, "watch group not found", http.StatusNotFound)
+		writeFormError(w, r, http.StatusNotFound, "The watch could not be found.")
 		return
 	}
 	for i := range a.state.Watches {
@@ -426,10 +452,39 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := a.saveLocked(); err != nil {
-		http.Error(w, "could not save watch metadata", http.StatusInternalServerError)
+		writeFormError(w, r, http.StatusInternalServerError, "The name and group could not be saved.")
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func sortGroups(groups []groupView, mode string) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+		switch mode {
+		case "balance":
+			return a.Confirmed+a.Unconfirmed > b.Confirmed+b.Unconfirmed
+		case "name":
+			return a.Label < b.Label
+		case "group":
+			if a.Category == b.Category {
+				return a.Label < b.Label
+			}
+			return a.Category < b.Category
+		case "date":
+			return a.CreatedAt.After(b.CreatedAt)
+		case "type":
+			if a.ScriptType == b.ScriptType {
+				return a.Label < b.Label
+			}
+			return a.ScriptType < b.ScriptType
+		default:
+			if a.LastActivity.Equal(b.LastActivity) {
+				return a.CreatedAt.After(b.CreatedAt)
+			}
+			return a.LastActivity.After(b.LastActivity)
+		}
+	})
 }
 
 func (a *App) deleteGroup(w http.ResponseWriter, r *http.Request) {
@@ -687,7 +742,7 @@ func (a *App) groupViewsLocked() []groupView {
 	indexes := make(map[string]int, len(a.state.Groups))
 	for _, group := range a.state.Groups {
 		if group.Category == "" {
-			group.Category = "Uncategorized"
+			group.Category = "uncategorized"
 		}
 		indexes[group.ID] = len(views)
 		views = append(views, groupView{WatchGroup: group})
@@ -703,7 +758,7 @@ func (a *App) groupViewsLocked() []groupView {
 			views = append(views, groupView{WatchGroup: WatchGroup{
 				ID:         groupID,
 				Label:      watch.Label,
-				Category:   "Uncategorized",
+				Category:   "uncategorized",
 				Source:     watch.Address,
 				ScriptType: "address",
 				Count:      1,
