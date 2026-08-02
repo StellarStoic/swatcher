@@ -8,14 +8,19 @@ Open the **Web UI**, enter a label and one of the following, then select
 - A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor
 
 For a plain extended key, select how many addresses to derive per branch and
-whether to include the `/1` change branch. Plain xpubs default to native SegWit;
-select a different address type when necessary. ypub and zpub formats identify
-their address type automatically.
+whether to include the `/1` change branch. A bare xpub does not identify its
+address type, so choose Legacy, Nested SegWit, Native SegWit, or Taproot when
+the selector appears. ypub and zpub formats identify their address type
+automatically; ordinary addresses do not require derivation settings.
 
 Descriptors must contain a public extended key and a non-hardened wildcard path
 ending in `/*`. Use `<0;1>` to cover both receive and change branches in one
 descriptor, for example `wpkh(xpub.../<0;1>/*)`. Descriptor paths override the
 form's address-type and change settings.
+
+If an address or any derived wallet address is already covered by an existing
+watch, s-watcher adds nothing and identifies the conflicting watch in a modal.
+This prevents duplicated activity notifications.
 
 s-watcher checks your local Electrs service for confirmed and unconfirmed
 activity. Transactions touching multiple addresses in an imported wallet are

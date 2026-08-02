@@ -150,14 +150,14 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		label = "Bitcoin address"
 	}
 	if len(label) > 80 {
-		http.Error(w, "label is too long", http.StatusBadRequest)
+		writeFormError(w, r, http.StatusBadRequest, "The watch name is too long.")
 		return
 	}
 	if category == "" {
 		category = "Uncategorized"
 	}
 	if len(category) > 60 {
-		http.Error(w, "category is too long", http.StatusBadRequest)
+		writeFormError(w, r, http.StatusBadRequest, "The group name is too long.")
 		return
 	}
 	groupID := randomID()
@@ -171,19 +171,22 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	} else {
 		parsedCount, parseErr := strconv.Atoi(r.FormValue("count"))
 		if parseErr != nil {
-			http.Error(w, "derivation count must be a number", http.StatusBadRequest)
+			writeFormError(w, r, http.StatusBadRequest, "Derivation count must be a number.")
 			return
 		}
 		count = parsedCount
 		derived, deriveErr := bitcoin.DeriveAddresses(source, scriptType, count, includeChange)
 		if deriveErr != nil {
-			http.Error(w, deriveErr.Error(), http.StatusBadRequest)
+			writeFormError(w, r, http.StatusBadRequest, deriveErr.Error()+".")
 			return
+		}
+		if len(derived) > 0 {
+			scriptType = scriptTypeForAddress(derived[0].Address)
 		}
 		for _, child := range derived {
 			scriptHash, hashErr := bitcoin.ScriptHash(child.Address)
 			if hashErr != nil {
-				http.Error(w, hashErr.Error(), http.StatusBadRequest)
+				writeFormError(w, r, http.StatusBadRequest, hashErr.Error()+".")
 				return
 			}
 			newWatches = append(newWatches, Watch{ID: randomID(), GroupID: groupID, Label: label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
@@ -191,13 +194,43 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	for _, group := range a.state.Groups {
+		if group.Source == source && group.ScriptType == scriptType {
+			writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This wallet or address is already being watched as %q in %q.", group.Label, group.Category))
+			return
+		}
+	}
+	overlaps := map[string]int{}
 	for _, existing := range a.state.Watches {
 		for _, candidate := range newWatches {
 			if existing.Address == candidate.Address {
-				http.Error(w, "one or more derived addresses are already watched", http.StatusConflict)
-				return
+				existingGroupID := existing.GroupID
+				if existingGroupID == "" {
+					existingGroupID = existing.ID
+				}
+				overlaps[existingGroupID]++
 			}
 		}
+	}
+	if len(overlaps) > 0 {
+		groupID, overlapCount := "", 0
+		for id, matches := range overlaps {
+			if matches > overlapCount {
+				groupID, overlapCount = id, matches
+			}
+		}
+		name := "an existing watch"
+		for _, group := range a.state.Groups {
+			if group.ID == groupID {
+				name = group.Label
+				if group.Category != "" {
+					name = group.Category + " / " + group.Label
+				}
+				break
+			}
+		}
+		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This wallet overlaps with %q: %d of %d derived addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
+		return
 	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
 	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC()})
@@ -206,6 +239,31 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func writeFormError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+		return
+	}
+	http.Error(w, message, status)
+}
+
+func scriptTypeForAddress(address string) string {
+	switch {
+	case strings.HasPrefix(address, "bc1p"):
+		return "taproot"
+	case strings.HasPrefix(address, "bc1q"):
+		return "native-segwit"
+	case strings.HasPrefix(address, "3"):
+		return "nested-segwit"
+	case strings.HasPrefix(address, "1"):
+		return "legacy"
+	default:
+		return "address"
+	}
 }
 
 func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {

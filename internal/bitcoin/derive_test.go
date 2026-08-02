@@ -44,6 +44,12 @@ func TestDerivePlainXpubBranches(t *testing.T) {
 	}
 }
 
+func TestPlainXpubRequiresAddressType(t *testing.T) {
+	if _, err := DeriveAddresses(testXpub(t), "", 1, false); err == nil || !strings.Contains(err.Error(), "choose an address type") {
+		t.Fatalf("expected an ambiguous xpub error, got %v", err)
+	}
+}
+
 func TestDeriveDescriptorBranches(t *testing.T) {
 	descriptor := "wpkh(" + testXpub(t) + "/<0;1>/*)"
 	addresses, err := DeriveAddresses(descriptor, "legacy", 2, false)
@@ -73,7 +79,7 @@ func TestNormalizeYpubInfersNestedSegwit(t *testing.T) {
 	}
 	binary.BigEndian.PutUint32(payload[:4], 0x049d7cb2)
 	ypub := encodeBase58Check(payload)
-	addresses, err := DeriveAddresses(ypub, "", 1, false)
+	addresses, err := DeriveAddresses(ypub, "legacy", 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

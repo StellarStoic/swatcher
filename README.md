@@ -31,11 +31,12 @@ No private keys are accepted or stored. Public extended keys reveal an entire
 wallet's transaction graph, so the state file and UI should still be treated as
 private information.
 
-Plain `xpub` imports default to native SegWit unless another address type is
-selected. `ypub` and `zpub` imports infer nested and native SegWit respectively.
-Descriptors are authoritative and ignore the form's address-type and change
-branch settings. Hardened derivation below an xpub is rejected because it is
-not mathematically possible.
+A plain `xpub` does not encode an address type, so the Web UI asks for one only
+when a bare xpub is entered. `ypub` and `zpub` imports infer nested and native
+SegWit respectively, while descriptors are authoritative. Duplicate addresses
+and overlapping wallet imports are rejected without changing the watch list and
+explained in an in-interface modal. Hardened derivation below an xpub is
+rejected because it is not mathematically possible.
 
 ## Architecture
 

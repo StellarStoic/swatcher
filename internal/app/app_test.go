@@ -67,3 +67,33 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
+
+func TestDuplicateWatchReturnsJSONConflict(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"label":    {"Donation address"},
+		"category": {"Donations"},
+		"source":   {"1BoatSLRHtKNngkdXEeobR76b53LETtpyT"},
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(form.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.Header.Set("Accept", "application/json")
+		response := httptest.NewRecorder()
+		a.addWatch(response, request)
+		if attempt == 0 && response.Code != http.StatusSeeOther {
+			t.Fatalf("first add status %d: %s", response.Code, response.Body.String())
+		}
+		if attempt == 1 {
+			if response.Code != http.StatusConflict {
+				t.Fatalf("duplicate status %d: %s", response.Code, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), "already being watched") || !strings.Contains(response.Header().Get("Content-Type"), "application/json") {
+				t.Fatalf("unexpected duplicate response: %s", response.Body.String())
+			}
+		}
+	}
+}

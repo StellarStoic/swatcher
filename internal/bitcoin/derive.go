@@ -49,8 +49,16 @@ func DeriveAddresses(input, scriptType string, count int, includeChange bool) ([
 	if err != nil {
 		return nil, err
 	}
-	if spec.scriptType == "" {
+	// Descriptor wrappers are authoritative. For plain SLIP-132 keys, the key
+	// version is authoritative. A plain xpub has no script semantics and must be
+	// paired with an explicit selection.
+	if !strings.Contains(strings.TrimSpace(input), "(") && inferredType != "" {
 		spec.scriptType = inferredType
+	} else if spec.scriptType == "" {
+		spec.scriptType = inferredType
+	}
+	if spec.scriptType == "" {
+		return nil, errors.New("choose an address type for this xpub")
 	}
 	key, err := hdkeychain.NewKeyFromString(normalized)
 	if err != nil || key.IsPrivate() {
@@ -173,7 +181,7 @@ func normalizeExtendedKey(key string) (string, string, error) {
 		return "", "", errors.New("invalid extended public key")
 	}
 	versions := map[uint32]string{
-		0x0488b21e: "native-segwit", // xpub: explicit selector may override.
+		0x0488b21e: "",              // xpub does not encode script semantics.
 		0x049d7cb2: "nested-segwit", // ypub
 		0x04b24746: "native-segwit", // zpub
 	}
