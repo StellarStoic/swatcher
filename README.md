@@ -76,7 +76,9 @@ replacing that nsec later. Disabling Nostr does not delete its sender identity.
 Generation and public-key derivation happen immediately when the action is
 saved; the npub is displayed while the persisted nsec remains masked. A stable
 randomized default name such as `swatcher-k7m2qd` is generated and published
-with the DiceBear avatar as a kind 0 profile before any alert is required.
+with the DiceBear avatar as a kind 0 profile before any alert is required. The
+generated avatar URL is visible as a read-only field in the Notifications
+action.
 
 The recipient ID can be read directly from the Bot API `getUpdates` response;
 the complete token-safe command is documented in `instructions.md`. Telegram

@@ -71,8 +71,9 @@ the action saves; the nsec field is populated but remains masked as a secret.
 The default sender name is a unique `swatcher-xxxxxx` name and can be changed.
 Supplying a different valid nsec immediately changes the sender identity.
 Disabling Nostr preserves the keys. A DiceBear avatar style is selected
-deterministically, and the name and avatar are published as the sender's Nostr
-profile without waiting for the first Bitcoin alert.
+deterministically. Its read-only URL appears in **Sender avatar URL**, and the
+name and avatar are published as the sender's Nostr profile without waiting for
+the first Bitcoin alert.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.

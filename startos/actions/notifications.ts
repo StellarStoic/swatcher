@@ -50,8 +50,14 @@ const inputSpec = InputSpec.of({
   }),
   nostrSenderNpub: Value.text({
     name: 'Sender npub',
-    description:
-      'Generated from the persistent sender nsec after the service starts',
+    description: 'Generated immediately from the persistent sender nsec',
+    required: false,
+    default: null,
+    immutable: true,
+  }),
+  nostrAvatar: Value.text({
+    name: 'Sender avatar URL',
+    description: 'Generated DiceBear avatar published in the Nostr profile',
     required: false,
     default: null,
     immutable: true,
@@ -82,6 +88,7 @@ export const notifications = sdk.Action.withInput(
       nostrSenderName: c?.nostrSenderName || 'swatcher',
       nostrSenderNsec: c?.nostrSenderNsec || null,
       nostrSenderNpub: c?.nostrSenderNpub || null,
+      nostrAvatar: c?.nostrAvatar || null,
     } satisfies NotificationInput
   },
   async ({ effects, input }) => {
