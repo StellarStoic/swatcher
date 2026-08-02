@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/s-watcher/s-watcher/internal/electrum"
+	"github.com/s-watcher/s-watcher/internal/webauth"
 )
 
 func TestDirection(t *testing.T) {
@@ -27,6 +28,58 @@ func TestDirection(t *testing.T) {
 		if got := direction(test.effect); got != test.want {
 			t.Fatalf("direction(%+v) = %q, want %q", test.effect, got, test.want)
 		}
+	}
+}
+
+func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+	a.state = state{
+		PrivacyMode: true,
+		Groups:      []WatchGroup{{ID: "group", Label: "Savings", Category: "Cold", Source: address, ScriptType: "address", Count: 1}},
+		Watches:     []Watch{{ID: "watch", GroupID: "group", Label: "Savings", Address: address, Confirmed: 123456, Initialized: true}},
+		Events:      []Event{{WatchID: "watch", GroupID: "group", TxID: strings.Repeat("a", 64), Direction: "received", Received: 5000, SeenAt: time.Now()}},
+	}
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, secret := range []string{address, "123456 sat", "5000 sat", strings.Repeat("a", 64)} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("privacy response exposed %q", secret)
+		}
+	}
+	if !strings.Contains(body, maskIdentifier(address)) || !strings.Contains(body, maskIdentifier(strings.Repeat("a", 64))) {
+		t.Fatalf("privacy response did not retain four-character edges: %s", body)
+	}
+}
+
+func TestLoginCreatesAuthenticatedSession(t *testing.T) {
+	dataDir := t.TempDir()
+	a, err := New(dataDir, "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := webauth.SetPassword(a.authPath, "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"password": {"correct horse battery staple"}}
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.login(response, request)
+	result := response.Result()
+	if result.StatusCode != http.StatusSeeOther || len(result.Cookies()) != 1 || !result.Cookies()[0].HttpOnly || result.Cookies()[0].SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unexpected login response: status=%d cookies=%+v", result.StatusCode, result.Cookies())
+	}
+	protectedResponse := httptest.NewRecorder()
+	protectedRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	protectedRequest.AddCookie(result.Cookies()[0])
+	a.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(protectedResponse, protectedRequest)
+	if protectedResponse.Code != http.StatusNoContent {
+		t.Fatalf("authenticated request returned %d", protectedResponse.Code)
 	}
 }
 

@@ -1,5 +1,12 @@
 # s-watcher
 
+## Set the web password
+
+Before opening the Web Interface, run **Set Web Password** from the s-watcher
+service actions. Enter the same password twice; it must contain at least 12
+characters. s-watcher stores only an Argon2id hash. Changing the password later
+signs out every existing browser session.
+
 Open the **Web UI**, enter a label and one of the following, then select
 **Add watch**:
 
@@ -30,6 +37,14 @@ Mempool events update when they become confirmed.
 The first successful check establishes the initial state. Later transactions
 are recorded as activity. Removing a watch also removes its locally stored
 activity.
+
+Use **Hide balances and identifiers** after signing in to enable privacy mode.
+It replaces balances and activity amounts with randomized legacy-computing
+symbols and masks addresses, extended keys, descriptors, transaction IDs, and
+the displayed Nostr npub except for their first and last four characters. The
+masking is performed before the HTML is rendered. Select **Show balances and
+identifiers** to reveal them again. This setting affects the Web Interface only;
+Telegram and Nostr notification amounts remain visible.
 
 Never enter a seed phrase or private key. s-watcher accepts only public data and
 cannot spend funds. An xpub or descriptor reveals the wallet's complete public

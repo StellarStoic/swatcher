@@ -21,6 +21,7 @@ import (
 	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
 	"github.com/s-watcher/s-watcher/internal/notify"
+	"github.com/s-watcher/s-watcher/internal/webauth"
 )
 
 type Watch struct {
@@ -64,25 +65,35 @@ type Event struct {
 }
 
 type state struct {
-	Watches []Watch      `json:"watches"`
-	Events  []Event      `json:"events"`
-	Groups  []WatchGroup `json:"groups,omitempty"`
+	Watches     []Watch      `json:"watches"`
+	Events      []Event      `json:"events"`
+	Groups      []WatchGroup `json:"groups,omitempty"`
+	PrivacyMode bool         `json:"privacyMode,omitempty"`
 }
 
 type groupView struct {
 	WatchGroup
-	Confirmed   int64
-	Unconfirmed int64
-	Addresses   int
-	Ready       int
-	LastChecked time.Time
-	LastError   string
+	Confirmed      int64
+	Unconfirmed    int64
+	Addresses      int
+	Ready          int
+	LastChecked    time.Time
+	LastError      string
+	DisplaySource  string
+	DisplayBalance string
+}
+
+type eventView struct {
+	Event
+	DisplayAmount string
+	DisplayTxID   string
 }
 
 type pageData struct {
-	Groups []groupView
-	Events []Event
-	Nostr  *nostrIdentityView
+	Groups      []groupView
+	Events      []eventView
+	Nostr       *nostrIdentityView
+	PrivacyMode bool
 }
 
 type nostrIdentityView struct {
@@ -92,20 +103,24 @@ type nostrIdentityView struct {
 }
 
 type App struct {
-	mu       sync.RWMutex
-	state    state
-	path     string
-	client   *electrum.Client
-	interval time.Duration
-	tmpl     *template.Template
-	notifier notify.Sender
+	mu               sync.RWMutex
+	state            state
+	path             string
+	client           *electrum.Client
+	interval         time.Duration
+	tmpl             *template.Template
+	notifier         notify.Sender
+	authPath         string
+	authMu           sync.Mutex
+	failedLogins     int
+	loginLockedUntil time.Time
 }
 
 func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	a := &App{path: filepath.Join(dataDir, "state.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}}
+	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}}
 	a.tmpl = template.Must(template.New("index").Funcs(template.FuncMap{"watchLabel": a.watchLabel}).Parse(indexHTML))
 	if err := a.load(); err != nil {
 		return nil, err
@@ -118,11 +133,17 @@ func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) 
 
 func (a *App) Run(listen string) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", a.index)
-	mux.HandleFunc("POST /watches", a.addWatch)
-	mux.HandleFunc("POST /groups/{id}/update", a.updateGroup)
-	mux.HandleFunc("POST /groups/{id}/delete", a.deleteGroup)
+	mux.HandleFunc("GET /login", a.loginPage)
+	mux.HandleFunc("POST /login", a.login)
+	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /health", a.health)
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /", a.index)
+	protected.HandleFunc("POST /watches", a.addWatch)
+	protected.HandleFunc("POST /groups/{id}/update", a.updateGroup)
+	protected.HandleFunc("POST /groups/{id}/delete", a.deleteGroup)
+	protected.HandleFunc("POST /privacy", a.togglePrivacy)
+	mux.Handle("/", a.requireAuth(protected))
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
 	return server.ListenAndServe()
@@ -130,16 +151,124 @@ func (a *App) Run(listen string) error {
 
 func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
-	data := pageData{Groups: a.groupViewsLocked(), Events: append([]Event(nil), a.state.Events...)}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode}
+	for _, event := range a.state.Events {
+		view := eventView{Event: event, DisplayTxID: event.TxID}
+		view.DisplayAmount = eventAmount(event)
+		if a.state.PrivacyMode {
+			view.DisplayTxID = maskIdentifier(event.TxID)
+			view.DisplayAmount = legacyMask(8)
+		}
+		data.Events = append(data.Events, view)
+	}
+	for i := range data.Groups {
+		data.Groups[i].DisplaySource = data.Groups[i].Source
+		data.Groups[i].DisplayBalance = fmt.Sprintf("%d sat", data.Groups[i].Confirmed)
+		if data.Groups[i].Unconfirmed != 0 {
+			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%d pending)", data.Groups[i].Unconfirmed)
+		}
+		if a.state.PrivacyMode {
+			data.Groups[i].DisplaySource = maskIdentifier(data.Groups[i].Source)
+			data.Groups[i].DisplayBalance = legacyMask(8)
+		}
+	}
 	a.mu.RUnlock()
 	if c, err := a.notifier.Load(); err == nil && c.NostrEnabled && c.NostrSenderNpub != "" {
-		data.Nostr = &nostrIdentityView{Name: c.NostrSenderName, Npub: c.NostrSenderNpub, Avatar: c.NostrAvatar}
+		npub := c.NostrSenderNpub
+		if data.PrivacyMode {
+			npub = maskIdentifier(npub)
+		}
+		data.Nostr = &nostrIdentityView{Name: c.NostrSenderName, Npub: npub, Avatar: c.NostrAvatar}
 	}
 	sort.Slice(data.Events, func(i, j int) bool { return data.Events[i].SeenAt.After(data.Events[j].SeenAt) })
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.tmpl.Execute(w, data); err != nil {
 		log.Printf("render: %v", err)
 	}
+}
+
+func (a *App) togglePrivacy(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	a.state.PrivacyMode = !a.state.PrivacyMode
+	err := a.saveLocked()
+	a.mu.Unlock()
+	if err != nil {
+		http.Error(w, "could not save privacy preference", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		config, err := webauth.Load(a.authPath)
+		if err != nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		cookie, err := r.Cookie("swatcher_session")
+		if err != nil || !webauth.ValidSession(config, cookie.Value, time.Now()) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
+	_, err := webauth.Load(a.authPath)
+	data := struct {
+		Configured bool
+		Error      bool
+	}{Configured: err == nil, Error: r.URL.Query().Get("error") == "1"}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if renderErr := template.Must(template.New("login").Parse(loginHTML)).Execute(w, data); renderErr != nil {
+		log.Printf("render login: %v", renderErr)
+	}
+}
+
+func (a *App) login(w http.ResponseWriter, r *http.Request) {
+	a.authMu.Lock()
+	if time.Now().Before(a.loginLockedUntil) {
+		a.authMu.Unlock()
+		http.Error(w, "Too many failed attempts. Try again in one minute.", http.StatusTooManyRequests)
+		return
+	}
+	a.authMu.Unlock()
+	config, err := webauth.Load(a.authPath)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	password := r.FormValue("password")
+	if len(password) > 1024 || !webauth.Verify(config, password) {
+		a.authMu.Lock()
+		a.failedLogins++
+		if a.failedLogins >= 5 {
+			a.loginLockedUntil = time.Now().Add(time.Minute)
+			a.failedLogins = 0
+		}
+		a.authMu.Unlock()
+		http.Redirect(w, r, "/login?error=1", http.StatusSeeOther)
+		return
+	}
+	a.authMu.Lock()
+	a.failedLogins = 0
+	a.loginLockedUntil = time.Time{}
+	a.authMu.Unlock()
+	expires := time.Now().Add(12 * time.Hour)
+	token, err := webauth.NewSession(config, expires)
+	if err != nil {
+		http.Error(w, "could not create session", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "swatcher_session", Value: token, Path: "/", Expires: expires, MaxAge: 12 * 60 * 60, HttpOnly: true, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", SameSite: http.SameSiteStrictMode})
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: "swatcher_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", SameSite: http.SameSiteStrictMode})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
@@ -648,11 +777,47 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
+func maskIdentifier(value string) string {
+	runes := []rune(value)
+	if len(runes) <= 8 {
+		return strings.Repeat("*", len(runes))
+	}
+	return string(runes[:4]) + strings.Repeat("*", len(runes)-8) + string(runes[len(runes)-4:])
+}
+
+func legacyMask(length int) string {
+	symbols := []rune("🬀🬁🬂🬃🬄🬅🬆🬇🬈🬉🬊🬋🬌🬍🬎🬏🬐🬑🬒🬓🬔🬕🬖🬗🬘🬙🬚🬛🬜🬝🬞🬟")
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return strings.Repeat("*", length)
+	}
+	result := make([]rune, length)
+	for i := range result {
+		result[i] = symbols[int(b[i])%len(symbols)]
+	}
+	return string(result)
+}
+
+func eventAmount(event Event) string {
+	switch event.Direction {
+	case "received":
+		return fmt.Sprintf("+%d sat", event.Received)
+	case "sent":
+		return fmt.Sprintf("-%d sat", event.Sent)
+	case "self-transfer":
+		return fmt.Sprintf("net %d sat · in %d / out %d", event.Net, event.Received, event.Sent)
+	default:
+		return "—"
+	}
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https://api.dicebear.com data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https://api.dicebear.com data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }

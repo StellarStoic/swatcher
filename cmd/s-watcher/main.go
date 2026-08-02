@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,11 +11,26 @@ import (
 
 	"github.com/s-watcher/s-watcher/internal/app"
 	"github.com/s-watcher/s-watcher/internal/notify"
+	"github.com/s-watcher/s-watcher/internal/webauth"
 )
 
 const testMessage = "You receive this message because you enabled Notifications in s-watcher. Consider this a test message."
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "set-web-password" {
+		password, err := io.ReadAll(io.LimitReader(os.Stdin, 2049))
+		if err != nil {
+			log.Fatal("read password")
+		}
+		if len(password) > 2048 {
+			log.Fatal("password is too long")
+		}
+		path := filepath.Join(env("SWATCHER_DATA", "/data"), "auth.json")
+		if err := webauth.SetPassword(path, string(password)); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "test-notification" {
 		if err := testNotification(os.Args[2]); err != nil {
 			log.Fatal(err)

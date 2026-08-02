@@ -26,6 +26,8 @@ Licensed under the GNU Affero General Public License v3.0 only.
 - Persist per-channel delivery state so restarts do not duplicate alerts.
 - Generate and retain a dedicated Nostr sender identity under `/data`, with a
   deterministic DiceBear avatar and configurable sender name.
+- Require an Argon2id-protected password for the Web Interface and provide a
+  server-rendered privacy mode for balances and identifiers.
 
 No private keys are accepted or stored. Public extended keys reveal an entire
 wallet's transaction graph, so the state file and UI should still be treated as
@@ -107,3 +109,24 @@ gift-wrapped as kind 1059. Recipient delivery uses the recipient's kind 10050
 relay list discovered through the configured relays. A kind 0 sender profile
 containing the configured name and selected DiceBear avatar is published to the
 configured relays.
+
+## Web password and privacy mode
+
+Run the StartOS **Set Web Password** action before opening the Web Interface.
+Only an Argon2id salt and hash are stored in `/data/auth.json`; changing the
+password rotates the session secret and signs out every browser. Sessions use
+HttpOnly, SameSite=Strict cookies, expire after 12 hours, and are temporarily
+rate-limited after repeated failures. The StartOS health endpoint remains
+available without authentication.
+
+After signing in, **Hide balances and identifiers** enables persistent privacy
+mode. Balances and activity amounts are replaced server-side with randomized
+Unicode Symbols for Legacy Computing. Bitcoin addresses, extended keys,
+descriptors, transaction IDs, and the displayed Nostr npub retain only their
+first and last four characters. The unmasked values are not included in the
+rendered HTML. Notification messages are not altered by web privacy mode.
+
+The StartOS backup includes the complete `main` volume: `state.json`,
+`notifications.json`, and `auth.json`. Restores therefore retain watches,
+notification credentials and sender keys, the web-password hash, privacy mode,
+and session-signing state.
