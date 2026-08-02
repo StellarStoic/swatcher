@@ -7,6 +7,10 @@ service actions. Enter the same password twice; it must contain at least 12
 characters. s-watcher stores only an Argon2id hash. Changing the password later
 signs out every existing browser session.
 
+If you forget the password, select **Forgot password?** on the login page. Open
+s-watcher in StartOS, select **Actions**, and run **Set Web Password**. Setting
+a new password does not remove watches or change notification configuration.
+
 Open the **Web UI**, enter a label and one of the following, then select
 **Add watch**:
 

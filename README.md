@@ -119,6 +119,11 @@ HttpOnly, SameSite=Strict cookies, expire after 12 hours, and are temporarily
 rate-limited after repeated failures. The StartOS health endpoint remains
 available without authentication.
 
+If the password is forgotten, **Forgot password?** on the login page explains
+how to run **Set Web Password** from the authenticated StartOS service actions.
+This replaces the password without changing watches or notification settings;
+notifications are not required for account recovery.
+
 After signing in, **Hide balances and identifiers** enables persistent privacy
 mode. Balances and activity amounts are replaced server-side with randomized
 Unicode Symbols for Legacy Computing. Bitcoin addresses, extended keys,

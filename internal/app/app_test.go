@@ -65,6 +65,11 @@ func TestLoginCreatesAuthenticatedSession(t *testing.T) {
 	if err := webauth.SetPassword(a.authPath, "correct horse battery staple"); err != nil {
 		t.Fatal(err)
 	}
+	loginPageResponse := httptest.NewRecorder()
+	a.loginPage(loginPageResponse, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if body := loginPageResponse.Body.String(); !strings.Contains(body, "Forgot password?") || !strings.Contains(body, "Set Web Password") {
+		t.Fatalf("login page is missing recovery guidance: %s", body)
+	}
 	form := url.Values{"password": {"correct horse battery staple"}}
 	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
