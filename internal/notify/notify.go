@@ -31,6 +31,8 @@ type Config struct {
 	NostrSenderNpub       string   `json:"nostrSenderNpub"`
 	NostrAvatar           string   `json:"nostrAvatar"`
 	NostrProfilePublished bool     `json:"nostrProfilePublished"`
+	TelegramTestPending   bool     `json:"telegramTestPending"`
+	NostrTestPending      bool     `json:"nostrTestPending"`
 }
 type Sender struct {
 	Path string
@@ -122,6 +124,41 @@ func (s Sender) EnsureProfile(ctx context.Context, c Config) (Config, error) {
 	}
 	c.NostrProfilePublished = true
 	return c, s.save(c)
+}
+
+func (s Sender) DeliverTests(ctx context.Context, c Config, message string) (Config, error) {
+	var deliveryErrors []error
+	changed := false
+	if !c.TelegramEnabled && c.TelegramTestPending {
+		c.TelegramTestPending = false
+		changed = true
+	}
+	if !c.NostrEnabled && c.NostrTestPending {
+		c.NostrTestPending = false
+		changed = true
+	}
+	if c.TelegramEnabled && c.TelegramTestPending {
+		if err := s.Telegram(ctx, c, message); err != nil {
+			deliveryErrors = append(deliveryErrors, fmt.Errorf("Telegram test: %w", err))
+		} else {
+			c.TelegramTestPending = false
+			changed = true
+		}
+	}
+	if c.NostrEnabled && c.NostrTestPending {
+		if err := s.Nostr(ctx, c, message); err != nil {
+			deliveryErrors = append(deliveryErrors, fmt.Errorf("Nostr test: %w", err))
+		} else {
+			c.NostrTestPending = false
+			changed = true
+		}
+	}
+	if changed {
+		if err := s.save(c); err != nil {
+			deliveryErrors = append(deliveryErrors, fmt.Errorf("save test delivery state: %w", err))
+		}
+	}
+	return c, errors.Join(deliveryErrors...)
 }
 func (s Sender) Telegram(ctx context.Context, c Config, message string) error {
 	if !c.TelegramEnabled {

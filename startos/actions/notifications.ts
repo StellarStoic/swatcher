@@ -133,6 +133,9 @@ export const notifications = sdk.Action.withInput(
         profileChanged || !input.nostrEnabled
           ? false
           : (previous?.nostrProfilePublished ?? false),
+      telegramTestPending: input.telegramEnabled,
+      nostrTestPending: input.nostrEnabled,
     })
+    await sdk.restart(effects)
   },
 )

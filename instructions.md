@@ -77,3 +77,8 @@ the first Bitcoin alert.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.
+Saving the Notifications action restarts the service configuration and sends a
+one-time test message through every enabled channel: “You receive this message
+because you enabled Notifications in s-watcher. Consider this a test message.”
+Failed test deliveries remain pending for retry; successful channels are not
+duplicated.

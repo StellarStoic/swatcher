@@ -409,6 +409,15 @@ func (a *App) deliverPending() {
 			c = updated
 		}
 	}
+	if c.TelegramTestPending || c.NostrTestPending {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		updated, testErr := a.notifier.DeliverTests(ctx, c, "You receive this message because you enabled Notifications in s-watcher. Consider this a test message.")
+		cancel()
+		c = updated
+		if testErr != nil {
+			log.Printf("notification test delivery: %v", testErr)
+		}
+	}
 	a.mu.RLock()
 	events := append([]Event(nil), a.state.Events...)
 	groups := append([]WatchGroup(nil), a.state.Groups...)

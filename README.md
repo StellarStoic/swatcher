@@ -80,6 +80,10 @@ with the DiceBear avatar as a kind 0 profile before any alert is required. The
 generated avatar URL is visible as a read-only field in the Notifications
 action.
 
+Saving Notifications immediately sends a one-time test message through each
+enabled channel. Per-channel pending state is persisted so failures retry while
+successful test deliveries are not duplicated.
+
 The recipient ID can be read directly from the Bot API `getUpdates` response;
 the complete token-safe command is documented in `instructions.md`. Telegram
 groups remain an optional destination and use their negative chat ID.
