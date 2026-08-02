@@ -1,0 +1,50 @@
+# s-watcher
+
+Open the **Web UI**, enter a label and one of the following, then select
+**Add watch**:
+
+- A Bitcoin mainnet address
+- An account-level `xpub`, `ypub`, or `zpub`
+- A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor
+
+For a plain extended key, select how many addresses to derive per branch and
+whether to include the `/1` change branch. Plain xpubs default to native SegWit;
+select a different address type when necessary. ypub and zpub formats identify
+their address type automatically.
+
+Descriptors must contain a public extended key and a non-hardened wildcard path
+ending in `/*`. Use `<0;1>` to cover both receive and change branches in one
+descriptor, for example `wpkh(xpub.../<0;1>/*)`. Descriptor paths override the
+form's address-type and change settings.
+
+s-watcher checks your local Electrs service for confirmed and unconfirmed
+activity. Transactions touching multiple addresses in an imported wallet are
+combined into one event with exact received, sent, or self-transfer amounts.
+Mempool events update when they become confirmed.
+
+The first successful check establishes the initial state. Later transactions
+are recorded as activity. Removing a watch also removes its locally stored
+activity.
+
+Never enter a seed phrase or private key. s-watcher accepts only public data and
+cannot spend funds. An xpub or descriptor reveals the wallet's complete public
+transaction graph, so protect access to the service and its backups.
+
+## Notifications
+
+Open the StartOS **Notifications** action to configure either channel:
+
+- Telegram requires a BotFather bot token and destination chat ID.
+- Nostr requires one or more `wss://` discovery relays and the receiver npub.
+  All private messages use NIP-17 gift wrapping. The receiver must publish a
+  kind 10050 DM relay list discoverable from the configured relays.
+
+When Nostr is first enabled without a sender nsec, s-watcher generates a
+dedicated persistent nsec/npub. Reopen the action after the service starts to
+view them. The sender name can be changed, and supplying a different valid nsec
+changes the sender identity. Disabling Nostr preserves the keys. A DiceBear
+avatar style is chosen deterministically from several styles and published with
+the sender profile.
+
+Successful delivery is recorded separately for each channel. Failed deliveries
+are retried during later polling cycles without duplicating successful ones.

@@ -1,0 +1,94 @@
+package bitcoin
+
+import (
+	"encoding/binary"
+	"strings"
+	"testing"
+
+	"github.com/btcsuite/btcd/btcutil/hdkeychain"
+	"github.com/btcsuite/btcd/chaincfg"
+)
+
+func testXpub(t *testing.T) string {
+	t.Helper()
+	master, err := hdkeychain.NewMaster([]byte("s-watcher deterministic derivation test"), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := master.Derive(hdkeychain.HardenedKeyStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := account.Neuter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return public.String()
+}
+
+func TestDerivePlainXpubBranches(t *testing.T) {
+	addresses, err := DeriveAddresses(testXpub(t), "native-segwit", 3, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 6 {
+		t.Fatalf("got %d addresses, want 6", len(addresses))
+	}
+	if addresses[0].Path != "m/0/0" || addresses[3].Path != "m/1/0" {
+		t.Fatalf("unexpected paths: %+v", addresses)
+	}
+	for _, address := range addresses {
+		if !strings.HasPrefix(address.Address, "bc1q") {
+			t.Fatalf("expected native SegWit address, got %s", address.Address)
+		}
+	}
+}
+
+func TestDeriveDescriptorBranches(t *testing.T) {
+	descriptor := "wpkh(" + testXpub(t) + "/<0;1>/*)"
+	addresses, err := DeriveAddresses(descriptor, "legacy", 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 4 || addresses[2].Path != "m/1/0" {
+		t.Fatalf("unexpected descriptor derivation: %+v", addresses)
+	}
+}
+
+func TestDeriveDescriptorDirectWildcard(t *testing.T) {
+	descriptor := "wpkh(" + testXpub(t) + "/*)"
+	addresses, err := DeriveAddresses(descriptor, "", 2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 2 || addresses[0].Path != "m/0" || addresses[1].Path != "m/1" {
+		t.Fatalf("unexpected direct wildcard derivation: %+v", addresses)
+	}
+}
+
+func TestNormalizeYpubInfersNestedSegwit(t *testing.T) {
+	payload, err := decodeBase58Check(testXpub(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.BigEndian.PutUint32(payload[:4], 0x049d7cb2)
+	ypub := encodeBase58Check(payload)
+	addresses, err := DeriveAddresses(ypub, "", 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(addresses[0].Address, "3") {
+		t.Fatalf("expected nested SegWit address, got %s", addresses[0].Address)
+	}
+}
+
+func TestDeriveRejectsUnsafeRanges(t *testing.T) {
+	for _, count := range []int{0, 501} {
+		if _, err := DeriveAddresses(testXpub(t), "native-segwit", count, false); err == nil {
+			t.Fatalf("accepted count %d", count)
+		}
+	}
+	if _, err := DeriveAddresses("wpkh("+testXpub(t)+"/0'/*)", "", 1, false); err == nil {
+		t.Fatal("accepted hardened public derivation")
+	}
+}
