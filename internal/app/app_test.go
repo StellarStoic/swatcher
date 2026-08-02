@@ -164,7 +164,8 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "testwallet") || !strings.Contains(response.Body.String(), "Sort by") || !strings.Contains(response.Body.String(), ">Edit<") {
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "testwallet") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }

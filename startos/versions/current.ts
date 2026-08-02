@@ -1,12 +1,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:10',
+  version: '0.1.0:11',
   releaseNotes: {
     en_US:
-      'Adds colored latest-activity signals to watched addresses and wallets.',
+      'Moves one-shot notification tests into Notifications and fixes watch editing visibility.',
     de_DE:
-      'Fügt farbige Aktivitätssignale für überwachte Adressen und Wallets hinzu.',
+      'Verschiebt einmalige Tests in die Benachrichtigungseinstellungen und korrigiert die Sichtbarkeit der Bearbeitung.',
   },
   migrations: {
     up: async () => {},

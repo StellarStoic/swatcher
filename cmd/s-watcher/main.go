@@ -55,7 +55,7 @@ func main() {
 
 func testNotification(channel string) error {
 	sender := notify.Sender{Path: filepath.Join(env("SWATCHER_DATA", "/data"), "notifications.json")}
-	config, err := sender.EnsureIdentity()
+	config, err := sender.Load()
 	if err != nil {
 		return fmt.Errorf("load notification configuration: %w", err)
 	}

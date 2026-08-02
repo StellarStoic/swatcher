@@ -50,6 +50,9 @@ editing a watch. The watch list can be sorted by stack size, name, group, date
 added, latest detected activity, or address type. Editing is opt-in per row;
 Cancel restores the saved values without a request.
 
+Edit inputs are hidden until **Edit** is selected. Changing the sort order
+returns the viewport to the first watch row rather than the top of the page.
+
 Each watch row has a slim activity rail: gray means no detected movement or a
 net-neutral transaction, green means the latest transaction added sats, and
 red means it drained sats. The rail reflects the latest detected event for the
@@ -101,14 +104,11 @@ showing its URL as a configuration field. StartOS 0.4 action forms do not
 provide an inline image field, so the Notifications action cannot render the
 avatar between its text inputs.
 
-Saving Notifications only persists the settings. The separate **Send Telegram
-test message** and **Send Nostr test message** actions send on demand and report
-delivery failures immediately; configuration saves and service restarts never
-send test messages automatically.
-
-Each channel's test action is hidden until that channel has been enabled and
-saved. Enabled test actions are grouped under their corresponding Telegram or
-Nostr notification channel instead of appearing before Notifications setup.
+Saving Notifications normally only persists the settings. After a channel has
+been enabled and saved, its section exposes a one-shot **Send test message after
+save** switch. Selecting it sends during that submission and reports the real
+delivery error in the Notifications action. The switch resets to off whenever
+the form is reopened; service restarts never send tests automatically.
 
 At container startup, a minimal bootstrap step grants the unprivileged
 `swatcher` process ownership of `/data`. The service then drops privileges

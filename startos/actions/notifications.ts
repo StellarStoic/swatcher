@@ -29,6 +29,18 @@ const inputSpec = InputSpec.of({
     required: false,
     default: null,
   }),
+  telegramTest: Value.dynamicToggle(async () => {
+    const config = await notificationConfig.read().once()
+    return {
+      name: 'Send Telegram test message after save',
+      description:
+        'One-time test using the saved Telegram token and recipient ID',
+      default: false,
+      disabled: config?.telegramEnabled
+        ? false
+        : 'Enable Telegram and save Notifications first',
+    }
+  }),
   nostrEnabled: Value.toggle({
     name: 'Enable Nostr NIP-17 messages',
     default: false,
@@ -72,6 +84,17 @@ const inputSpec = InputSpec.of({
     placeholder: 'Will appear after save if Nostr is enabled.',
     disabled: 'Generated sender keys cannot be changed',
   })),
+  nostrTest: Value.dynamicToggle(async () => {
+    const config = await notificationConfig.read().once()
+    return {
+      name: 'Send Nostr test message after save',
+      description: 'One-time NIP-17 test using the saved Nostr configuration',
+      default: false,
+      disabled: config?.nostrEnabled
+        ? false
+        : 'Enable Nostr and save Notifications first',
+    }
+  }),
 })
 type NotificationInput = typeof inputSpec._TYPE
 
@@ -93,6 +116,7 @@ export const notifications = sdk.Action.withInput(
       telegramEnabled: c?.telegramEnabled ?? false,
       telegramToken: c?.telegramToken || null,
       telegramChatId: c?.telegramChatId || null,
+      telegramTest: false,
       nostrEnabled: c?.nostrEnabled ?? false,
       nostrRelays:
         configuredRelays.length > 0
@@ -102,6 +126,7 @@ export const notifications = sdk.Action.withInput(
       nostrSenderName: c?.nostrSenderName || 'swatcher',
       nostrSenderNsec: c?.nostrSenderNsec || null,
       nostrSenderNpub: c?.nostrSenderNpub || null,
+      nostrTest: false,
     } satisfies NotificationInput
   },
   async ({ effects, input }) => {
@@ -157,5 +182,34 @@ export const notifications = sdk.Action.withInput(
           ? false
           : (previous?.nostrProfilePublished ?? false),
     })
+    const testChannels: Array<'telegram' | 'nostr'> = []
+    if (input.telegramEnabled && input.telegramTest) {
+      testChannels.push('telegram')
+    }
+    if (input.nostrEnabled && input.nostrTest) {
+      testChannels.push('nostr')
+    }
+    if (testChannels.length > 0) {
+      const mounts = sdk.Mounts.of().mountVolume({
+        volumeId: 'main',
+        subpath: null,
+        mountpoint: '/data',
+        readonly: false,
+      })
+      await sdk.SubContainer.withTemp(
+        effects,
+        { imageId: 's-watcher' },
+        mounts,
+        'test-notifications',
+        async (sub) => {
+          for (const channel of testChannels) {
+            await sub.execFail(['s-watcher', 'test-notification', channel], {
+              env: { SWATCHER_DATA: '/data' },
+              user: 'root',
+            })
+          }
+        },
+      )
+    }
   },
 )

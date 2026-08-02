@@ -130,10 +130,10 @@ Notifications settings.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.
-Saving the **Notifications** action only stores the configuration. To verify a
-channel, enable and save it first, then run its **Send Telegram test message**
-or **Send Nostr test message** action. Disabled channels do not show a test
-action. The selected action immediately sends: “You receive this message because you
-enabled Notifications in s-watcher. Consider this a test message.” A delivery
-error is shown by the action and is not queued for automatic retry. Saving again
-or restarting s-watcher does not send another test.
+Saving the **Notifications** action normally only stores the configuration. To
+verify a channel, enable and save it, reopen Notifications, select that
+channel's **Send test message after save** switch, and save once more. It sends:
+“You receive this message because you enabled Notifications in s-watcher.
+Consider this a test message.” The switch resets to off, delivery errors are
+shown immediately, and tests are not queued for automatic retry. Restarting
+s-watcher does not send another test.
