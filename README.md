@@ -68,15 +68,15 @@ toolchain and npm dependencies.
 ## Notifications
 
 The StartOS **Notifications** action configures Telegram and Nostr. Telegram
-requires a BotFather token and chat ID. Nostr accepts discovery relays and a
+personal alerts require a BotFather token and recipient user ID. The user must
+press **Start** in the bot's private chat once before it can send alerts. Nostr
+accepts discovery relays and a
 recipient npub, generates a dedicated nsec/npub when first enabled, and permits
 replacing that nsec later. Disabling Nostr does not delete its sender identity.
 
-For a private Telegram group, add the bot to the group, send a command addressed
-to its username, and read the resulting negative group ID from the Bot API
-`getUpdates` response. Private supergroup IDs commonly begin with `-100`; the
-minus sign is part of the ID. The complete token-safe command is documented in
-`instructions.md`. Do not add third-party ID-finder bots to private groups.
+The recipient ID can be read directly from the Bot API `getUpdates` response;
+the complete token-safe command is documented in `instructions.md`. Telegram
+groups remain an optional destination and use their negative chat ID.
 
 Nostr delivery is NIP-17 only: kind 14 rumors are NIP-44 sealed and NIP-59
 gift-wrapped as kind 1059. Recipient delivery uses the recipient's kind 10050
