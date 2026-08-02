@@ -1,5 +1,9 @@
 import { notificationConfig } from '../fileModels/notifications.json'
-import { ensureNostrIdentity, uniqueSenderName } from '../nostrIdentity'
+import {
+  ensureNostrIdentity,
+  uniqueSenderName,
+  validateRecipientNpub,
+} from '../nostrIdentity'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
@@ -37,9 +41,11 @@ const inputSpec = InputSpec.of({
     default: defaultNostrRelays.join('\n'),
   }),
   nostrRecipient: Value.text({
-    name: 'Recipient npub',
+    name: 'Recipient npub (your Nostr public key)',
+    description: 'Only paste an npub here. Never paste your secret nsec.',
     required: false,
     default: null,
+    placeholder: 'npub1…',
   }),
   nostrSenderName: Value.text({
     name: 'Sender name',
@@ -55,6 +61,7 @@ const inputSpec = InputSpec.of({
     required: false,
     default: null,
     masked: true,
+    placeholder: 'Will appear after save if Nostr is enabled.',
     disabled: 'Generated sender keys cannot be changed',
   })),
   nostrSenderNpub: Value.dynamicText(async () => ({
@@ -62,6 +69,7 @@ const inputSpec = InputSpec.of({
     description: 'Will appear after save if Nostr is enabled.',
     required: false,
     default: null,
+    placeholder: 'Will appear after save if Nostr is enabled.',
     disabled: 'Generated sender keys cannot be changed',
   })),
 })
@@ -97,6 +105,15 @@ export const notifications = sdk.Action.withInput(
     } satisfies NotificationInput
   },
   async ({ effects, input }) => {
+    const requestedRecipient = input.nostrRecipient?.trim() ?? ''
+    const nostrRecipient = requestedRecipient
+      ? validateRecipientNpub(requestedRecipient)
+      : ''
+    if (input.nostrEnabled && !nostrRecipient) {
+      throw new Error(
+        'Enter your Nostr public key as an npub before enabling Nostr notifications.',
+      )
+    }
     const previous = await notificationConfig.read().once()
     const selectedNsec = previous?.nostrSenderNsec || ''
     const identity =
@@ -130,7 +147,7 @@ export const notifications = sdk.Action.withInput(
       nostrEnabled: input.nostrEnabled,
       nostrRelays:
         requestedRelays.length > 0 ? requestedRelays : defaultNostrRelays,
-      nostrRecipient: input.nostrRecipient?.trim() ?? '',
+      nostrRecipient,
       nostrSenderName: effectiveName,
       nostrSenderNsec: identity?.nsec ?? '',
       nostrSenderNpub: identity?.npub ?? '',

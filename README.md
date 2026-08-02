@@ -122,6 +122,12 @@ relay list discovered through the configured relays. A kind 0 sender profile
 containing the configured name and selected DiceBear avatar is published to the
 configured relays.
 
+The recipient field accepts and validates only an `npub` public key. An
+accidentally pasted `nsec` is rejected before configuration is written and a
+security warning explains why secret keys must never be pasted into websites.
+Empty generated sender-key fields show that their values will appear after
+saving with Nostr enabled.
+
 ## Web password and privacy mode
 
 Run the StartOS **Set Web Password** action before opening the Web Interface.

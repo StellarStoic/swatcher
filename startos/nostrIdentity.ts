@@ -13,6 +13,25 @@ function decodeNsec(nsec: string): Uint8Array {
   return decoded.bytes
 }
 
+export function validateRecipientNpub(value: string): string {
+  const npub = value.trim()
+  if (npub.toLowerCase().startsWith('nsec1')) {
+    throw new Error(
+      'I will not accept this key. You pasted an nsec, which is your secret private key. Please do not paste your nsec into websites. You got away with it here because this is your own server, but a malicious website could easily compromise your Nostr identity. Remember: nsec is secret—protect it. Now provide your npub, your public key.',
+    )
+  }
+  let decoded
+  try {
+    decoded = bech32.decodeToBytes(npub)
+  } catch {
+    throw new Error('The Nostr recipient must be a valid npub public key.')
+  }
+  if (decoded.prefix !== 'npub' || decoded.bytes.length !== 32) {
+    throw new Error('The Nostr recipient must be a valid npub public key.')
+  }
+  return npub.toLowerCase()
+}
+
 export function uniqueSenderName(): string {
   const entropy = randomBytes(6)
   let suffix = ''

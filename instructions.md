@@ -69,6 +69,11 @@ Open the StartOS **Notifications** action to configure either channel:
   All private messages use NIP-17 gift wrapping. The receiver must publish a
   kind 10050 DM relay list discoverable from the configured relays.
 
+**Recipient npub** means your Nostr public key. Never enter your `nsec`: it is
+your secret private key. s-watcher rejects an nsec without saving it and asks
+for the corresponding npub. The sender nsec and npub fields explain that the
+generated values appear after Notifications is saved with Nostr enabled.
+
 The Nostr relay field is prefilled with:
 
 - `wss://relay.damus.io`
