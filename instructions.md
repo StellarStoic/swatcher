@@ -89,8 +89,9 @@ first Bitcoin alert.
 
 Successful delivery is recorded separately for each channel. Failed deliveries
 are retried during later polling cycles without duplicating successful ones.
-Saving the Notifications action restarts the service configuration and sends a
-one-time test message through every enabled channel: “You receive this message
-because you enabled Notifications in s-watcher. Consider this a test message.”
-Failed test deliveries remain pending for retry; successful channels are not
-duplicated.
+Saving the **Notifications** action only stores the configuration. To verify a
+channel, run **Test Telegram** or **Test Nostr** from the service actions. The
+selected action immediately sends: “You receive this message because you
+enabled Notifications in s-watcher. Consider this a test message.” A delivery
+error is shown by the action and is not queued for automatic retry. Saving again
+or restarting s-watcher does not send another test.

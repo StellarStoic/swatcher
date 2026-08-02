@@ -81,9 +81,10 @@ published with a DiceBear Pixelbot avatar as a kind 0 profile before any alert
 is required. The actual image is rendered in the s-watcher Web UI instead of
 showing its URL as a configuration field.
 
-Saving Notifications immediately sends a one-time test message through each
-enabled channel. Per-channel pending state is persisted so failures retry while
-successful test deliveries are not duplicated.
+Saving Notifications only persists the settings. The separate **Test
+Telegram** and **Test Nostr** actions send the test message on demand and report
+delivery failures immediately; configuration saves and service restarts never
+send test messages automatically.
 
 At container startup, a minimal bootstrap step grants the unprivileged
 `swatcher` process ownership of `/data`. The service then drops privileges

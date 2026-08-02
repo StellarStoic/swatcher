@@ -15,7 +15,5 @@ export const notificationConfig = FileHelper.json(
     nostrSenderNpub: z.string().catch(''),
     nostrAvatar: z.string().catch(''),
     nostrProfilePublished: z.boolean().catch(false),
-    telegramTestPending: z.boolean().catch(false),
-    nostrTestPending: z.boolean().catch(false),
   }),
 )
