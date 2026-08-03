@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,7 +18,7 @@ import (
 	"github.com/s-watcher/s-watcher/internal/webauth"
 )
 
-const testMessage = "You receive this message because you enabled Notifications in s-watcher. Consider this a test message."
+const testMessage = "You receive this message because you enabled Notifications in s/watcher. Consider this a test message."
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "set-web-password" {
@@ -30,6 +31,23 @@ func main() {
 		}
 		path := filepath.Join(env("SWATCHER_DATA", "/data"), "auth.json")
 		if err := webauth.SetPassword(path, string(password)); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "set-privacy-mode" {
+		enabled, err := parseEnabled(os.Args[2])
+		if err != nil {
+			log.Fatal(err)
+		}
+		password, err := io.ReadAll(io.LimitReader(os.Stdin, 2049))
+		if err != nil {
+			log.Fatal("read password")
+		}
+		if len(password) > 2048 {
+			log.Fatal("password is too long")
+		}
+		if err := app.SetPrivacyMode(env("SWATCHER_DATA", "/data"), enabled, string(password)); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -52,8 +70,19 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("s-watcher listening on %s; electrum=%s", listen, electrum)
+	log.Printf("s/watcher listening on %s; electrum=%s", listen, electrum)
 	log.Fatal(server.Run(listen))
+}
+
+func parseEnabled(value string) (bool, error) {
+	switch value {
+	case "enabled":
+		return true, nil
+	case "disabled":
+		return false, nil
+	default:
+		return false, errors.New("privacy mode must be enabled or disabled")
+	}
 }
 
 func testNotification(channel string) error {

@@ -8,9 +8,9 @@ export const short = {
 
 export const long = {
   en_US:
-    's-watcher detects confirmed and mempool activity for watch-only Bitcoin addresses without contacting third-party services.',
+    's/watcher detects confirmed and mempool activity for watch-only Bitcoin addresses without contacting third-party services.',
   de_DE:
-    's-watcher erkennt bestätigte und unbestätigte Aktivitäten für Bitcoin-Watch-Only-Adressen, ohne Dienste Dritter zu kontaktieren.',
+    's/watcher erkennt bestätigte und unbestätigte Aktivitäten für Bitcoin-Watch-Only-Adressen, ohne Dienste Dritter zu kontaktieren.',
 }
 
 export const electrsDescription = {

@@ -1,19 +1,19 @@
-# s-watcher
+# s/watcher
 
-Copyright (C) 2026 StellarStoic. s-watcher is free software licensed under the
+Copyright (C) 2026 StellarStoic. s/watcher is free software licensed under the
 GNU Affero General Public License, version 3 or (at your option) any later
 version, and is provided without warranty. The license and corresponding source
 code are available at <https://github.com/StellarStoic/swatcher>.
 
 ## Set the web password
 
-Before opening the Web Interface, run **Set Web Password** from the s-watcher
+Before opening the Web Interface, run **Set Web Password** from the s/watcher
 service actions. Enter the same password twice; it must contain at least 5
-characters. s-watcher stores only an Argon2id hash. Changing the password later
+characters. s/watcher stores only an Argon2id hash. Changing the password later
 signs out every existing browser session.
 
 If you forget the password, select **Forgot password?** on the login page. Open
-s-watcher in StartOS, select **Actions**, and run **Set Web Password**. Setting
+s/watcher in StartOS, select **Actions**, and run **Set Web Password**. Setting
 a new password does not remove watches or change notification configuration.
 
 Open the **Web UI**, enter a label and one of the following, then select
@@ -35,7 +35,7 @@ descriptor, for example `wpkh(xpub.../<0;1>/*)`. Descriptor paths override the
 form's address-type and change settings.
 
 If an address or any derived wallet address is already covered by an existing
-watch, s-watcher adds nothing and identifies the conflicting watch in a modal.
+watch, s/watcher adds nothing and identifies the conflicting watch in a modal.
 This prevents duplicated activity notifications.
 
 Names and groups may contain letters, numbers, spaces, and underscores. They
@@ -49,7 +49,7 @@ The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.
 
-s-watcher checks your local Electrs service for confirmed and unconfirmed
+s/watcher checks your local Electrs service for confirmed and unconfirmed
 activity. Transactions touching multiple addresses in an imported wallet are
 combined into one event with exact received, sent, or self-transfer amounts.
 Mempool events update when they become confirmed.
@@ -58,15 +58,16 @@ The first successful check establishes the initial state. Later transactions
 are recorded as activity. Removing a watch also removes its locally stored
 activity.
 
-Use **Hide balances and identifiers** after signing in to enable privacy mode.
-It replaces balances and activity amounts with randomized legacy-computing
-symbols and masks addresses, extended keys, descriptors, transaction IDs, and
-the displayed Nostr npub except for their first and last four characters. The
-masking is performed before the HTML is rendered. Select **Show balances and
-identifiers** to reveal them again. This setting affects the Web Interface only;
-Telegram and Nostr notification amounts remain visible.
+Open the StartOS **Privacy Mode** action under **General** to control persistent
+masking. Set the Web Password before enabling privacy mode. Disabling privacy
+mode requires entering that password. Privacy mode replaces balances and
+activity amounts with randomized Unicode Symbols for Legacy Computing and masks
+addresses, extended keys, descriptors, transaction IDs, and the displayed Nostr
+npub except for their first and last four characters. The masking is performed before the HTML is
+rendered. This setting affects the Web Interface only; Telegram and Nostr notification
+amounts remain visible.
 
-Never enter a seed phrase or private key. s-watcher accepts only public data and
+Never enter a seed phrase or private key. s/watcher accepts only public data and
 cannot spend funds. An xpub or descriptor reveals the wallet's complete public
 transaction graph, so protect access to the service and its backups.
 
@@ -80,7 +81,7 @@ Open the StartOS **Notifications** action to configure either channel:
   kind 10050 DM relay list discoverable from the configured relays.
 
 **Recipient npub** means your Nostr public key. Never enter your `nsec`: it is
-your secret private key. s-watcher rejects an nsec without saving it and asks
+your secret private key. s/watcher rejects an nsec without saving it and asks
 for the corresponding npub. The sender nsec and npub fields explain that the
 generated values appear after Notifications is saved with Nostr enabled.
 
@@ -128,9 +129,9 @@ the nsec is masked and neither key can be changed. The private sender key is
 generated randomly and stored internally. The default sender name
 is a unique `swatcher-xxxxxx` name and can be changed. Disabling Nostr preserves
 the identity. A DiceBear Pixelbot avatar is generated from the npub and rendered
-in the s-watcher Web UI; its URL is not shown as a form field. The name and
+in the s/watcher Web UI; its URL is not shown as a form field. The name and
 avatar are published as the sender's Nostr profile without waiting for the
-first Bitcoin alert. Open the s-watcher Web Interface to see the generated
+first Bitcoin alert. Open the s/watcher Web Interface to see the generated
 Pixelbot avatar; StartOS 0.4 action forms cannot display an inline image in the
 Notifications settings.
 
@@ -139,7 +140,7 @@ are retried during later polling cycles without duplicating successful ones.
 Saving the **Notifications** action normally only stores the configuration. To
 verify a channel, enable and save it, reopen Notifications, select that
 channel's **Send test message after save** switch, and save once more. It sends:
-“You receive this message because you enabled Notifications in s-watcher.
+“You receive this message because you enabled Notifications in s/watcher.
 Consider this a test message.” The switch resets to off, delivery errors are
 shown immediately, and tests are not queued for automatic retry. Restarting
-s-watcher does not send another test.
+s/watcher does not send another test.

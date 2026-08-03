@@ -4,9 +4,12 @@
 package app
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -97,8 +100,82 @@ func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
 	if !strings.Contains(body, maskIdentifier(address)) || !strings.Contains(body, maskIdentifier(strings.Repeat("a", 64))) {
 		t.Fatalf("privacy response did not retain four-character edges: %s", body)
 	}
+	if !strings.ContainsAny(body, "🬀🬁🬂🬃🬄🬅🬆🬇🬈🬉🬊🬋🬌🬍🬎🬏🬐🬑🬒🬓🬔🬕🬖🬗🬘🬙🬚🬛🬜🬝🬞🬟") {
+		t.Fatalf("privacy response did not use legacy-computing masks: %s", body)
+	}
 	if !strings.Contains(body, "signal-received") {
 		t.Fatalf("latest received activity did not render a green signal: %s", body)
+	}
+}
+
+func TestTemplatesEscapeStoredValues(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `<script>alert("xss")</script>`
+	a.state.Groups = []WatchGroup{{ID: "group", Label: payload, Category: payload, Source: payload, ScriptType: "address"}}
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") {
+		t.Fatalf("stored values were not safely HTML-escaped: %s", body)
+	}
+}
+
+func TestSecurityHeadersAndCrossSitePostProtection(t *testing.T) {
+	called := false
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if cspNonce(r) == "" {
+			t.Fatal("request context did not receive a CSP nonce")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := response.Header().Get("Content-Security-Policy")
+	if response.Code != http.StatusNoContent || !strings.Contains(csp, "script-src 'nonce-") || strings.Contains(csp, "script-src 'unsafe-inline'") || response.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("unexpected security headers: %v", response.Header())
+	}
+	called = false
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("password=12345"))
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Host = "s-watcher.local"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || called {
+		t.Fatalf("cross-site POST was not rejected: status=%d called=%v", response.Code, called)
+	}
+}
+
+func TestSetPrivacyModeRequiresPasswordConfigurationAndVerifiesDisable(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := SetPrivacyMode(dataDir, true, ""); err == nil || !strings.Contains(err.Error(), "Web Password") {
+		t.Fatalf("enabling without a password should fail clearly: %v", err)
+	}
+	if err := webauth.SetPassword(filepath.Join(dataDir, "auth.json"), "12345"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPrivacyMode(dataDir, true, ""); err != nil {
+		t.Fatalf("enable privacy mode: %v", err)
+	}
+	if err := SetPrivacyMode(dataDir, false, "wrong"); err == nil || !strings.Contains(err.Error(), "incorrect") {
+		t.Fatalf("disabling with the wrong password should fail: %v", err)
+	}
+	if err := SetPrivacyMode(dataDir, false, "12345"); err != nil {
+		t.Fatalf("disable privacy mode: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved state
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.PrivacyMode {
+		t.Fatal("privacy mode remained enabled after password verification")
 	}
 }
 
@@ -169,7 +246,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
@@ -190,7 +267,7 @@ func TestDuplicateWatchReturnsJSONConflict(t *testing.T) {
 		request.Header.Set("Accept", "application/json")
 		response := httptest.NewRecorder()
 		a.addWatch(response, request)
-		if attempt == 0 && response.Code != http.StatusSeeOther {
+		if attempt == 0 && (response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"id"`)) {
 			t.Fatalf("first add status %d: %s", response.Code, response.Body.String())
 		}
 		if attempt == 1 {

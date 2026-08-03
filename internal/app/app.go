@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -102,6 +104,7 @@ type pageData struct {
 	PrivacyMode      bool
 	SortMode         string
 	GroupSuggestions []string
+	CSPNonce         string
 }
 
 var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9_]+(?: [a-z0-9_]+)*$`)
@@ -156,7 +159,6 @@ func (a *App) Run(listen string) error {
 	protected.HandleFunc("POST /watches", a.addWatch)
 	protected.HandleFunc("POST /groups/{id}/update", a.updateGroup)
 	protected.HandleFunc("POST /groups/{id}/delete", a.deleteGroup)
-	protected.HandleFunc("POST /privacy", a.togglePrivacy)
 	mux.Handle("/", a.requireAuth(protected))
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
@@ -169,7 +171,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
 		sortMode = "activity"
 	}
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, SortMode: sortMode}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, SortMode: sortMode, CSPNonce: cspNonce(r)}
 	suggestions := map[string]bool{}
 	for _, group := range a.state.Groups {
 		if watchMetadataPattern.MatchString(group.Category) {
@@ -225,18 +227,6 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *App) togglePrivacy(w http.ResponseWriter, r *http.Request) {
-	a.mu.Lock()
-	a.state.PrivacyMode = !a.state.PrivacyMode
-	err := a.saveLocked()
-	a.mu.Unlock()
-	if err != nil {
-		http.Error(w, "could not save privacy preference", http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
 func (a *App) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		config, err := webauth.Load(a.authPath)
@@ -258,7 +248,8 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		Configured bool
 		Error      bool
-	}{Configured: err == nil, Error: r.URL.Query().Get("error") == "1"}
+		CSPNonce   string
+	}{Configured: err == nil, Error: r.URL.Query().Get("error") == "1", CSPNonce: cspNonce(r)}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if renderErr := template.Must(template.New("login").Parse(loginHTML)).Execute(w, data); renderErr != nil {
 		log.Printf("render login: %v", renderErr)
@@ -405,6 +396,12 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not save watch", http.StatusInternalServerError)
 		return
 	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": groupID})
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -539,7 +536,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	if err := a.client.Ping(ctx); err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "Electrs is unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -836,6 +833,42 @@ func (a *App) saveLocked() error {
 	return os.Rename(tmp, a.path)
 }
 
+func SetPrivacyMode(dataDir string, enabled bool, password string) error {
+	auth, err := webauth.Load(filepath.Join(dataDir, "auth.json"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("set the Web Password before enabling Privacy Mode")
+		}
+		return fmt.Errorf("load web password: %w", err)
+	}
+	if !enabled && !webauth.Verify(auth, password) {
+		return errors.New("the Web Password is incorrect; Privacy Mode remains enabled")
+	}
+	path := filepath.Join(dataDir, "state.json")
+	var current state
+	b, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(b, &current); err != nil {
+			return fmt.Errorf("decode state: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read state: %w", err)
+	}
+	current.PrivacyMode = enabled
+	b, err = json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode state: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0600); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	return nil
+}
+
 func randomID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -891,11 +924,43 @@ func movementSignal(event Event) string {
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonceBytes := make([]byte, 18)
+		if _, err := rand.Read(nonceBytes); err != nil {
+			http.Error(w, "could not secure response", http.StatusInternalServerError)
+			return
+		}
+		nonce := base64.RawStdEncoding.EncodeToString(nonceBytes)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https://api.dicebear.com data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
-		next.ServeHTTP(w, r)
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; object-src 'none'; connect-src 'self'; img-src 'self' https://api.dicebear.com data:; style-src 'unsafe-inline'; script-src 'nonce-"+nonce+"'; form-action 'self'; frame-ancestors 'none'")
+		if r.Method == http.MethodPost {
+			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+				http.Error(w, "cross-site request rejected", http.StatusForbidden)
+				return
+			}
+			if origin := r.Header.Get("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				expectedHost := r.Host
+				if forwardedHost := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwardedHost != "" {
+					expectedHost = forwardedHost
+				}
+				if err != nil || !strings.EqualFold(u.Host, expectedHost) {
+					http.Error(w, "cross-site request rejected", http.StatusForbidden)
+					return
+				}
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), cspNonceKey{}, nonce)))
 	})
+}
+
+type cspNonceKey struct{}
+
+func cspNonce(r *http.Request) string {
+	nonce, _ := r.Context().Value(cspNonceKey{}).(string)
+	return nonce
 }

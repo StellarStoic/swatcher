@@ -3,8 +3,10 @@
 
 import { sdk } from '../sdk'
 import { notifications } from './notifications'
+import { privacyMode } from './privacyMode'
 import { webPassword } from './webPassword'
 
 export const actions = sdk.Actions.of()
+  .addAction(privacyMode)
   .addAction(notifications)
   .addAction(webPassword)

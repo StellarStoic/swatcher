@@ -1,16 +1,16 @@
-# s-watcher
+# s/watcher
 
-`s-watcher` is a small, self-hosted Bitcoin watch-only activity monitor for
+`s/watcher` is a small, self-hosted Bitcoin watch-only activity monitor for
 StartOS 0.4. It talks only to the Electrs service installed on the same StartOS
 server.
 
 Copyright (C) 2026 StellarStoic.
 
 Licensed under the GNU Affero General Public License, version 3 or (at your
-option) any later version. s-watcher is provided without warranty. See
-[`LICENSE`](LICENSE) for the complete terms. Users interacting with s-watcher
+option) any later version. s/watcher is provided without warranty. See
+[`LICENSE`](LICENSE) for the complete terms. Users interacting with s/watcher
 over a network can obtain its corresponding source from the
-[s-watcher repository](https://github.com/StellarStoic/swatcher).
+[s/watcher repository](https://github.com/StellarStoic/swatcher).
 
 ## Current milestone
 
@@ -68,7 +68,7 @@ whole watch group.
 ## Architecture
 
 ```text
-browser -> s-watcher:8080 -> Electrs:50001 -> Bitcoin
+browser -> s/watcher:8080 -> Electrs:50001 -> Bitcoin
                   |
                   +-> /data/state.json
 ```
@@ -106,7 +106,7 @@ Generation and public-key derivation happen immediately when the action is
 saved; the npub is displayed while the persisted nsec is not returned to the
 UI. A stable randomized default name such as `swatcher-k7m2qd` is generated and
 published with a DiceBear Pixelbot avatar as a kind 0 profile before any alert
-is required. The actual image is rendered in the s-watcher Web UI instead of
+is required. The actual image is rendered in the s/watcher Web UI instead of
 showing its URL as a configuration field. StartOS 0.4 action forms do not
 provide an inline image field, so the Notifications action cannot render the
 avatar between its text inputs.
@@ -157,12 +157,14 @@ how to run **Set Web Password** from the authenticated StartOS service actions.
 This replaces the password without changing watches or notification settings;
 notifications are not required for account recovery.
 
-After signing in, **Hide balances and identifiers** enables persistent privacy
-mode. Balances and activity amounts are replaced server-side with randomized
-Unicode Symbols for Legacy Computing. Bitcoin addresses, extended keys,
+The StartOS **Privacy Mode** action controls persistent masking in the Web
+Interface. A Web Password must be configured before privacy mode can be
+enabled, and disabling it requires that password. Balances and activity amounts
+are replaced server-side with randomized Unicode Symbols for Legacy Computing.
+Bitcoin addresses, extended keys,
 descriptors, transaction IDs, and the displayed Nostr npub retain only their
 first and last four characters. The unmasked values are not included in the
-rendered HTML. Notification messages are not altered by web privacy mode.
+rendered HTML. Notification messages are not altered by privacy mode.
 
 The StartOS backup includes the complete `main` volume: `state.json`,
 `notifications.json`, and `auth.json`. Restores therefore retain watches,

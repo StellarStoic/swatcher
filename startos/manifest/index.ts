@@ -6,7 +6,7 @@ import { electrsDescription, long, short } from './i18n'
 
 export const manifest = setupManifest({
   id: 's-watcher',
-  title: 's-watcher',
+  title: 's/watcher',
   license: 'AGPL-3.0-or-later',
   packageRepo: 'https://github.com/StellarStoic/swatcher',
   upstreamRepo: 'https://github.com/StellarStoic/swatcher',

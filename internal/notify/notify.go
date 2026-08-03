@@ -101,7 +101,7 @@ func (s Sender) EnsureProfile(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	metadata, _ := json.Marshal(map[string]string{"name": c.NostrSenderName, "display_name": c.NostrSenderName, "picture": c.NostrAvatar, "about": "Private Bitcoin activity alerts from s-watcher"})
+	metadata, _ := json.Marshal(map[string]string{"name": c.NostrSenderName, "display_name": c.NostrSenderName, "picture": c.NostrAvatar, "about": "Private Bitcoin activity alerts from s/watcher"})
 	pubkey, _ := kr.GetPublicKey(ctx)
 	profile := nostr.Event{PubKey: pubkey, CreatedAt: nostr.Now(), Kind: nostr.KindProfileMetadata, Content: string(metadata)}
 	if err = kr.SignEvent(ctx, &profile); err != nil {
@@ -182,5 +182,5 @@ func Message(label, direction string, received, sent uint64, txid string, height
 	if height > 0 {
 		state = fmt.Sprintf("block %d", height)
 	}
-	return strings.TrimSpace(fmt.Sprintf("s-watcher: %s\n%s · received %d sat · sent %d sat\n%s\n%s", label, direction, received, sent, state, txid))
+	return strings.TrimSpace(fmt.Sprintf("s/watcher: %s\n%s · received %d sat · sent %d sat\n%s\n%s", label, direction, received, sent, state, txid))
 }

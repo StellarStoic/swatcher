@@ -29,7 +29,7 @@ export const webPassword = sdk.Action.withInput(
   {
     name: 'Set Web Password',
     description:
-      'Set or replace the password required to open the s-watcher Web Interface',
+      'Set or replace the password required to open the s/watcher Web Interface',
     warning: 'Changing the password signs out every existing browser session.',
     allowedStatuses: 'any',
     group: null,
@@ -70,7 +70,7 @@ export const webPassword = sdk.Action.withInput(
     return {
       version: '1',
       title: 'Web password saved',
-      message: 'Use the new password to open the s-watcher Web Interface.',
+      message: 'Use the new password to open the s/watcher Web Interface.',
       result: null,
     }
   },

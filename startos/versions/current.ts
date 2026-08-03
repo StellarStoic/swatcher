@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:12',
+  version: '0.1.0:13',
   releaseNotes: {
     en_US:
-      'Adds flexible watch names and groups, five-character web passwords, and AGPL v3-or-later licensing.',
+      'Introduces s/watcher branding, hardens the Web Interface, and improves privacy controls and watch focus.',
     de_DE:
-      'Erlaubt flexiblere Namen und Gruppen sowie Web-Passwörter ab fünf Zeichen und deklariert AGPL v3 oder neuer.',
+      'Führt das s/watcher-Branding ein, härtet die Weboberfläche und verbessert Datenschutz und Wallet-Fokus.',
   },
   migrations: {
     up: async () => {},
