@@ -4,7 +4,13 @@
 StartOS 0.4. It talks only to the Electrs service installed on the same StartOS
 server.
 
-Licensed under the GNU Affero General Public License v3.0 only.
+Copyright (C) 2026 StellarStoic.
+
+Licensed under the GNU Affero General Public License, version 3 or (at your
+option) any later version. s-watcher is provided without warranty. See
+[`LICENSE`](LICENSE) for the complete terms. Users interacting with s-watcher
+over a network can obtain its corresponding source from the
+[s-watcher repository](https://github.com/StellarStoic/swatcher).
 
 ## Current milestone
 
@@ -44,9 +50,10 @@ and overlapping wallet imports are rejected without changing the watch list and
 explained in an in-interface modal. Hardened derivation below an xpub is
 rejected because it is not mathematically possible.
 
-Watch names and groups accept lowercase ASCII letters and numbers only
-(`[a-z0-9]+`). Existing valid group names appear as suggestions when adding or
-editing a watch. The watch list can be sorted by stack size, name, group, date
+Watch names and groups accept letters, numbers, spaces, and underscores. Input
+is normalized to lowercase when saved, and repeated whitespace is collapsed.
+Existing valid group names appear as suggestions when adding or editing a
+watch. The watch list can be sorted by stack size, name, group, date
 added, latest detected activity, or address type. Editing is opt-in per row;
 Cancel restores the saved values without a request.
 
@@ -138,7 +145,8 @@ saving with Nostr enabled.
 ## Web password and privacy mode
 
 Run the StartOS **Set Web Password** action before opening the Web Interface.
-Only an Argon2id salt and hash are stored in `/data/auth.json`; changing the
+The password must contain at least five characters. Only an Argon2id salt and
+hash are stored in `/data/auth.json`; changing the
 password rotates the session secret and signs out every browser. Sessions use
 HttpOnly, SameSite=Strict cookies, expire after 12 hours, and are temporarily
 rate-limited after repeated failures. The StartOS health endpoint remains

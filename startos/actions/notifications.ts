@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import { notificationConfig } from '../fileModels/notifications.json'
 import {
   ensureNostrIdentity,

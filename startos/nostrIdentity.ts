@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import { randomBytes } from 'node:crypto'
 import { schnorr } from '@noble/curves/secp256k1'
 import { bech32 } from '@scure/base'

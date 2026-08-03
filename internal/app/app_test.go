@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package app
 
 import (
@@ -145,7 +148,8 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{
-		"label":          {"testwallet"},
+		"label":          {"Test Wallet_1"},
+		"category":       {"Cold Storage"},
 		"source":         {public.String()},
 		"script_type":    {"native-segwit"},
 		"count":          {"2"},
@@ -165,7 +169,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "testwallet") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
@@ -197,5 +201,17 @@ func TestDuplicateWatchReturnsJSONConflict(t *testing.T) {
 				t.Fatalf("unexpected duplicate response: %s", response.Body.String())
 			}
 		}
+	}
+}
+
+func TestNormalizeWatchMetadata(t *testing.T) {
+	if got := normalizeWatchMetadata("  PAYCheck__ Wallet\tONE  "); got != "paycheck__ wallet one" {
+		t.Fatalf("unexpected normalized metadata %q", got)
+	}
+	if !watchMetadataPattern.MatchString("paycheck__ wallet one") {
+		t.Fatal("normalized name with spaces and underscores should be valid")
+	}
+	if watchMetadataPattern.MatchString("paycheck-wallet") {
+		t.Fatal("unsupported punctuation should remain invalid")
 	}
 }

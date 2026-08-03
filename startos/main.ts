@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import { i18n } from './i18n'
 import { sdk } from './sdk'
 import { electrumBridge, uiPort } from './utils'

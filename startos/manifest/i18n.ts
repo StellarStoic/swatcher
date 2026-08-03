@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 export const short = {
   en_US: 'Watch Bitcoin addresses using your own Electrs',
   de_DE: 'Bitcoin-Adressen mit dem eigenen Electrs überwachen',

@@ -1,9 +1,14 @@
 # s-watcher
 
+Copyright (C) 2026 StellarStoic. s-watcher is free software licensed under the
+GNU Affero General Public License, version 3 or (at your option) any later
+version, and is provided without warranty. The license and corresponding source
+code are available at <https://github.com/StellarStoic/swatcher>.
+
 ## Set the web password
 
 Before opening the Web Interface, run **Set Web Password** from the s-watcher
-service actions. Enter the same password twice; it must contain at least 12
+service actions. Enter the same password twice; it must contain at least 5
 characters. s-watcher stores only an Argon2id hash. Changing the password later
 signs out every existing browser session.
 
@@ -33,7 +38,8 @@ If an address or any derived wallet address is already covered by an existing
 watch, s-watcher adds nothing and identifies the conflicting watch in a modal.
 This prevents duplicated activity notifications.
 
-Names and groups may contain only lowercase letters `a-z` and numbers `0-9`.
+Names and groups may contain letters, numbers, spaces, and underscores. They
+are converted to lowercase when saved, and repeated whitespace is collapsed.
 Previously saved valid groups appear as suggestions in the group field. In the
 watch list, select **Edit** to reveal the name and group inputs, **Save** to
 apply them, or **Cancel** to discard the unsaved values. Use **Sort by** to

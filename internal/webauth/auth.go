@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package webauth
 
 import (
@@ -31,8 +34,8 @@ type Config struct {
 }
 
 func SetPassword(path, password string) error {
-	if len(password) < 12 {
-		return errors.New("password must contain at least 12 characters")
+	if len(password) < 5 {
+		return errors.New("password must contain at least 5 characters")
 	}
 	salt := make([]byte, 16)
 	secret := make([]byte, 32)

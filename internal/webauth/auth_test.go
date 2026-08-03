@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package webauth
 
 import (
@@ -32,5 +35,15 @@ func TestPasswordAndSessionLifecycle(t *testing.T) {
 	rotated, _ := Load(path)
 	if ValidSession(rotated, token, now) {
 		t.Fatal("password change did not invalidate existing session")
+	}
+}
+
+func TestPasswordMinimumLength(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	if err := SetPassword(path, "1234"); err == nil {
+		t.Fatal("four-character password should be rejected")
+	}
+	if err := SetPassword(path, "12345"); err != nil {
+		t.Fatalf("five-character password should be accepted: %v", err)
 	}
 }

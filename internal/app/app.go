@@ -1,3 +1,6 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package app
 
 import (
@@ -101,7 +104,11 @@ type pageData struct {
 	GroupSuggestions []string
 }
 
-var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9]+$`)
+var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9_]+(?: [a-z0-9_]+)*$`)
+
+func normalizeWatchMetadata(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
 
 type nostrIdentityView struct {
 	Name   string
@@ -304,20 +311,20 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	source := strings.TrimSpace(r.FormValue("source"))
-	label := strings.TrimSpace(r.FormValue("label"))
-	category := strings.TrimSpace(r.FormValue("category"))
+	label := normalizeWatchMetadata(r.FormValue("label"))
+	category := normalizeWatchMetadata(r.FormValue("category"))
 	if label == "" {
 		label = "bitcoinaddress"
 	}
 	if len(label) > 80 || !watchMetadataPattern.MatchString(label) {
-		writeFormError(w, r, http.StatusBadRequest, "The watch name may contain only lowercase letters and numbers.")
+		writeFormError(w, r, http.StatusBadRequest, "The watch name may contain only letters, numbers, spaces, and underscores.")
 		return
 	}
 	if category == "" {
 		category = "uncategorized"
 	}
 	if len(category) > 60 || !watchMetadataPattern.MatchString(category) {
-		writeFormError(w, r, http.StatusBadRequest, "The group name may contain only lowercase letters and numbers.")
+		writeFormError(w, r, http.StatusBadRequest, "The group name may contain only letters, numbers, spaces, and underscores.")
 		return
 	}
 	groupID := randomID()
@@ -428,10 +435,10 @@ func scriptTypeForAddress(address string) string {
 
 func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	label := strings.TrimSpace(r.FormValue("label"))
-	category := strings.TrimSpace(r.FormValue("category"))
+	label := normalizeWatchMetadata(r.FormValue("label"))
+	category := normalizeWatchMetadata(r.FormValue("category"))
 	if label == "" || len(label) > 80 || !watchMetadataPattern.MatchString(label) || category == "" || len(category) > 60 || !watchMetadataPattern.MatchString(category) {
-		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only lowercase letters and numbers.")
+		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only letters, numbers, spaces, and underscores.")
 		return
 	}
 	a.mu.Lock()

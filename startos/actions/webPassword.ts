@@ -1,14 +1,17 @@
+// Copyright (C) 2026 StellarStoic
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
 const inputSpec = InputSpec.of({
   password: Value.text({
     name: 'Web password',
-    description: 'At least 12 characters; stored only as an Argon2id hash',
+    description: 'At least 5 characters; stored only as an Argon2id hash',
     required: true,
     default: null,
     masked: true,
-    minLength: 12,
+    minLength: 5,
     maxLength: 256,
   }),
   confirmPassword: Value.text({
@@ -16,7 +19,7 @@ const inputSpec = InputSpec.of({
     required: true,
     default: null,
     masked: true,
-    minLength: 12,
+    minLength: 5,
     maxLength: 256,
   }),
 })
