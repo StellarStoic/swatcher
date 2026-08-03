@@ -60,6 +60,10 @@ watch. The watch list can be sorted by stack size, name, group, date
 added, latest detected activity, or address type. Editing is opt-in per row;
 Cancel restores the saved values without a request.
 
+POST requests use browser Fetch Metadata for cross-site protection so StartOS
+Tor and LAN proxy hostnames can differ from the application's internal host
+without blocking legitimate same-origin actions.
+
 Edit inputs are hidden until **Edit** is selected. Changing the sort order
 returns the viewport to the first watch row rather than the top of the page.
 

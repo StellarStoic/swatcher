@@ -937,11 +937,16 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; object-src 'none'; connect-src 'self'; img-src 'self' https://api.dicebear.com data:; style-src 'unsafe-inline'; script-src 'nonce-"+nonce+"'; form-action 'self'; frame-ancestors 'none'")
 		if r.Method == http.MethodPost {
-			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			fetchSite := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
+			if fetchSite == "cross-site" {
 				http.Error(w, "cross-site request rejected", http.StatusForbidden)
 				return
 			}
-			if origin := r.Header.Get("Origin"); origin != "" {
+			// StartOS terminates Tor and LAN requests at its reverse proxy. The
+			// browser sees the public .onion or LAN origin while the application
+			// can see an internal Host value. Fetch Metadata is supplied by modern
+			// browsers before that proxy boundary and is therefore authoritative.
+			if origin := r.Header.Get("Origin"); origin != "" && fetchSite == "" {
 				u, err := url.Parse(origin)
 				expectedHost := r.Host
 				if forwardedHost := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwardedHost != "" {

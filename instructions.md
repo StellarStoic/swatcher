@@ -51,6 +51,9 @@ The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.
 
+The Web UI supports both StartOS LAN and Tor addresses. Same-origin actions
+remain accepted when the StartOS proxy presents a different internal hostname.
+
 s/watcher checks your local Electrs service for confirmed and unconfirmed
 activity. Transactions touching multiple addresses in an imported wallet are
 combined into one event with exact received, sent, or self-transfer amounts.

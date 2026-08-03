@@ -147,6 +147,28 @@ func TestSecurityHeadersAndCrossSitePostProtection(t *testing.T) {
 	if response.Code != http.StatusForbidden || called {
 		t.Fatalf("cross-site POST was not rejected: status=%d called=%v", response.Code, called)
 	}
+
+	called = false
+	request = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("password=12345"))
+	request.Header.Set("Origin", "http://examplehiddenservice.onion")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	request.Host = "s-watcher.internal"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || !called {
+		t.Fatalf("same-origin Tor proxy POST was rejected: status=%d called=%v", response.Code, called)
+	}
+
+	called = false
+	request = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("password=12345"))
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request.Host = "s-watcher.internal"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || called {
+		t.Fatalf("fetch-metadata cross-site POST was not rejected: status=%d called=%v", response.Code, called)
+	}
 }
 
 func TestSetPrivacyModeRequiresPasswordConfigurationAndVerifiesDisable(t *testing.T) {

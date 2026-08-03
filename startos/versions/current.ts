@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:14',
+  version: '0.1.0:15',
   releaseNotes: {
     en_US:
-      'Adds automatic, readable, and consistent colors to wallet-name and group tags.',
+      'Fixes legitimate Web Interface actions being rejected when accessed through the StartOS Tor proxy.',
     de_DE:
-      'Fügt Wallet-Namen und Gruppen-Tags automatische, gut lesbare und einheitliche Farben hinzu.',
+      'Behebt abgelehnte legitime Aktionen der Weboberfläche beim Zugriff über den StartOS-Tor-Proxy.',
   },
   migrations: {
     up: async () => {},
