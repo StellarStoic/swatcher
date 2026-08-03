@@ -52,6 +52,9 @@ rejected because it is not mathematically possible.
 
 Watch names and groups accept letters, numbers, spaces, and underscores. Input
 is normalized to lowercase when saved, and repeated whitespace is collapsed.
+Wallet-name and group tags receive automatic light colors. Color assignment is
+deterministic and case-insensitive, so the same normalized text always uses the
+same color across watches and page reloads.
 Existing valid group names appear as suggestions when adding or editing a
 watch. The watch list can be sorted by stack size, name, group, date
 added, latest detected activity, or address type. Editing is opt-in per row;

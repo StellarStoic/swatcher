@@ -40,6 +40,8 @@ This prevents duplicated activity notifications.
 
 Names and groups may contain letters, numbers, spaces, and underscores. They
 are converted to lowercase when saved, and repeated whitespace is collapsed.
+Name and group tags are assigned readable light colors automatically. Matching
+text uses the same color regardless of capitalization.
 Previously saved valid groups appear as suggestions in the group field. In the
 watch list, select **Edit** to reveal the name and group inputs, **Save** to
 apply them, or **Cancel** to discard the unsaved values. Use **Sort by** to
