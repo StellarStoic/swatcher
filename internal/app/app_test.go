@@ -202,6 +202,43 @@ func TestSetPrivacyModeRequiresPasswordConfigurationAndVerifiesDisable(t *testin
 	}
 }
 
+func TestSetDiscoveryGapPersistsValidatedValue(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := SetDiscoveryGap(dataDir, 0); err == nil {
+		t.Fatal("accepted a zero discovery gap")
+	}
+	if err := SetDiscoveryGap(dataDir, 37); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved state
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.DiscoveryGap != 37 {
+		t.Fatalf("saved discovery gap %d, want 37", saved.DiscoveryGap)
+	}
+}
+
+func TestSmartDiscoveryReportsUnsatisfiedSafetyLimit(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.DiscoveryGap = 20
+	a.state.Groups = []WatchGroup{{ID: "group", Source: "unused", ScriptType: "native-segwit", Count: 500}}
+	a.state.Watches = []Watch{{ID: "watch", GroupID: "group", Path: "m/0/499", Address: "address", KnownTx: []string{"used"}}}
+	if err := a.expandDiscoveryLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(a.state.Groups[0].DiscoveryError, "500-address limit") {
+		t.Fatalf("missing discovery-limit warning: %q", a.state.Groups[0].DiscoveryError)
+	}
+}
+
 func TestLoginCreatesAuthenticatedSession(t *testing.T) {
 	dataDir := t.TempDir()
 	a, err := New(dataDir, "127.0.0.1:1", time.Minute)
@@ -252,7 +289,6 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 		"category":       {"Cold Storage"},
 		"source":         {public.String()},
 		"script_type":    {"native-segwit"},
-		"count":          {"2"},
 		"include_change": {"on"},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(form.Encode()))
@@ -262,14 +298,33 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("add status %d: %s", response.Code, response.Body.String())
 	}
-	if len(a.state.Groups) != 1 || len(a.state.Watches) != 4 {
+	if len(a.state.Groups) != 1 || a.state.Groups[0].Count != defaultDiscoveryGap || len(a.state.Watches) != defaultDiscoveryGap*2 {
 		t.Fatalf("unexpected imported state: %d groups, %d watches", len(a.state.Groups), len(a.state.Watches))
 	}
+	for i := range a.state.Watches {
+		if a.state.Watches[i].Path == "m/0/19" {
+			a.state.Watches[i].KnownTx = []string{"used"}
+		}
+	}
+	if err := a.expandDiscoveryLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if a.state.Groups[0].Count != 40 || len(a.state.Watches) != 80 {
+		t.Fatalf("smart discovery did not extend both branches: count=%d watches=%d", a.state.Groups[0].Count, len(a.state.Watches))
+	}
+	a.state.DiscoveryGap = 5
+	if err := a.expandDiscoveryLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if a.state.Groups[0].Count != 40 || len(a.state.Watches) != 80 {
+		t.Fatalf("reducing the gap removed discovered coverage: count=%d watches=%d", a.state.Groups[0].Count, len(a.state.Watches))
+	}
+	a.state.DiscoveryGap = defaultDiscoveryGap
 
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }

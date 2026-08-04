@@ -27,11 +27,20 @@ Open the **Web UI**, enter a label and one of the following, then select
 - An account-level `xpub`, `ypub`, or `zpub`
 - A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor
 
-For a plain extended key, select how many addresses to derive per branch and
-whether to include the `/1` change branch. A bare xpub does not identify its
-address type, so choose Legacy, Nested SegWit, Native SegWit, or Taproot when
-the selector appears. ypub and zpub formats identify their address type
-automatically; ordinary addresses do not require derivation settings.
+For a plain extended key, choose whether to include the `/1` change branch. A
+bare xpub does not identify its address type, so choose Legacy, Nested SegWit,
+Native SegWit, or Taproot when the selector appears. ypub and zpub formats
+identify their address type automatically; ordinary addresses do not require
+derivation settings.
+
+s/watcher discovers wallet addresses automatically. Open **Actions → General →
+Smart Wallet Discovery** to set the number of consecutive unused addresses it
+keeps beyond the highest used index. The default is 20 and the allowed range is
+1–500. Larger gaps make more local Electrs queries. Reducing the setting never
+deletes addresses already discovered, and newly derived historical addresses
+are initialized without sending false activity notifications. The Web
+Interface warns if the 500-address-per-branch safety limit prevents satisfying
+the selected gap.
 
 Descriptors must contain a public extended key and a non-hardened wildcard path
 ending in `/*`. Use `<0;1>` to cover both receive and change branches in one

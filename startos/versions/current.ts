@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:16',
+  version: '0.1.0:17',
   releaseNotes: {
     en_US:
-      'Displays human-readable OP_RETURN messages and improves the service description.',
+      'Adds configurable smart address discovery for xpubs and ranged descriptors.',
     de_DE:
-      'Zeigt lesbare OP_RETURN-Nachrichten an und verbessert die Dienstbeschreibung.',
+      'Fügt eine konfigurierbare intelligente Adresserkennung für xpubs und Deskriptoren hinzu.',
   },
   migrations: {
     up: async () => {},

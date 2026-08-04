@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/s-watcher/s-watcher/internal/app"
@@ -48,6 +49,16 @@ func main() {
 			log.Fatal("password is too long")
 		}
 		if err := app.SetPrivacyMode(env("SWATCHER_DATA", "/data"), enabled, string(password)); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "set-discovery-gap" {
+		gap, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			log.Fatal("discovery gap must be a number")
+		}
+		if err := app.SetDiscoveryGap(env("SWATCHER_DATA", "/data"), gap); err != nil {
 			log.Fatal(err)
 		}
 		return

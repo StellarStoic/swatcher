@@ -17,7 +17,8 @@ over a network can obtain its corresponding source from the
 
 - Add and remove grouped mainnet Bitcoin addresses, xpubs, ypubs, zpubs, and
   supported output descriptors.
-- Derive a user-selected 1–500 addresses per branch from extended public keys.
+- Discover wallet addresses automatically with a configurable 1–500 address
+  gap, defaulting to 20 consecutive unused addresses.
 - Optionally monitor both the `/0` receive and `/1` change branches.
 - Support `pkh()`, `wpkh()`, `sh(wpkh())`, and `tr()` descriptor forms with
   non-hardened paths ending in `/*`, including `<0;1>` branch expressions.
@@ -45,6 +46,23 @@ over a network can obtain its corresponding source from the
 No private keys are accepted or stored. Public extended keys reveal an entire
 wallet's transaction graph, so the state file and UI should still be treated as
 private information.
+
+## Smart wallet discovery
+
+Extended public keys and ranged descriptors use smart discovery instead of a
+fixed derivation count. s/watcher initially derives the configured gap on each
+selected branch. After Electrs reports history, it keeps deriving until that
+many consecutive unused indexes remain beyond the highest used index. Newly
+derived addresses are baselined before notifications begin, preventing old
+wallet history from being reported as new activity.
+
+Set **Address discovery gap** under **Actions → General → Smart Wallet
+Discovery**. The default is 20 and the accepted range is 1–500. Increasing it
+can find wallets that skipped more indexes but performs more local Electrs
+queries. Decreasing it never deletes addresses already discovered. A maximum
+of 500 addresses per branch bounds resource usage. Plain addresses are not
+affected. If activity near the ceiling prevents satisfying the selected gap,
+the Web Interface shows a warning on that watch.
 
 A plain `xpub` does not encode an address type, so the Web UI asks for one only
 when a bare xpub is entered. `ypub` and `zpub` imports infer nested and native

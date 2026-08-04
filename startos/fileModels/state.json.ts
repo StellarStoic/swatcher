@@ -9,6 +9,7 @@ export const stateConfig = FileHelper.json(
   z
     .object({
       privacyMode: z.boolean().catch(false),
+      discoveryGap: z.number().int().min(1).max(500).catch(20),
     })
     .passthrough(),
 )

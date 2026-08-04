@@ -46,14 +46,15 @@ type Watch struct {
 }
 
 type WatchGroup struct {
-	ID            string    `json:"id"`
-	Label         string    `json:"label"`
-	Category      string    `json:"category,omitempty"`
-	Source        string    `json:"source"`
-	ScriptType    string    `json:"scriptType,omitempty"`
-	Count         int       `json:"count"`
-	IncludeChange bool      `json:"includeChange,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID             string    `json:"id"`
+	Label          string    `json:"label"`
+	Category       string    `json:"category,omitempty"`
+	Source         string    `json:"source"`
+	ScriptType     string    `json:"scriptType,omitempty"`
+	Count          int       `json:"count"`
+	IncludeChange  bool      `json:"includeChange,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	DiscoveryError string    `json:"discoveryError,omitempty"`
 }
 
 type Event struct {
@@ -72,10 +73,20 @@ type Event struct {
 }
 
 type state struct {
-	Watches     []Watch      `json:"watches"`
-	Events      []Event      `json:"events"`
-	Groups      []WatchGroup `json:"groups,omitempty"`
-	PrivacyMode bool         `json:"privacyMode,omitempty"`
+	Watches      []Watch      `json:"watches"`
+	Events       []Event      `json:"events"`
+	Groups       []WatchGroup `json:"groups,omitempty"`
+	PrivacyMode  bool         `json:"privacyMode,omitempty"`
+	DiscoveryGap int          `json:"discoveryGap,omitempty"`
+}
+
+const defaultDiscoveryGap = 20
+
+func discoveryGap(value int) int {
+	if value < 1 || value > 500 {
+		return defaultDiscoveryGap
+	}
+	return value
 }
 
 type groupView struct {
@@ -328,12 +339,9 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		newWatches = append(newWatches, Watch{ID: randomID(), GroupID: groupID, Label: label, Address: source, ScriptHash: scriptHash})
 		scriptType = "address"
 	} else {
-		parsedCount, parseErr := strconv.Atoi(r.FormValue("count"))
-		if parseErr != nil {
-			writeFormError(w, r, http.StatusBadRequest, "Derivation count must be a number.")
-			return
-		}
-		count = parsedCount
+		a.mu.RLock()
+		count = discoveryGap(a.state.DiscoveryGap)
+		a.mu.RUnlock()
 		derived, deriveErr := bitcoin.DeriveAddresses(source, scriptType, count, includeChange)
 		if deriveErr != nil {
 			writeFormError(w, r, http.StatusBadRequest, deriveErr.Error()+".")
@@ -653,7 +661,90 @@ func (a *App) poll() {
 		}
 		a.mu.Unlock()
 	}
+	a.mu.Lock()
+	if err := a.expandDiscoveryLocked(); err != nil {
+		log.Printf("smart discovery: %v", err)
+	}
+	if err := a.saveLocked(); err != nil {
+		log.Printf("save smart discovery: %v", err)
+	}
+	a.mu.Unlock()
 	a.deliverPending()
+}
+
+func (a *App) expandDiscoveryLocked() error {
+	gap := discoveryGap(a.state.DiscoveryGap)
+	addressOwners := make(map[string]string, len(a.state.Watches))
+	for _, watch := range a.state.Watches {
+		addressOwners[watch.Address] = watch.GroupID
+	}
+	for groupIndex := range a.state.Groups {
+		group := &a.state.Groups[groupIndex]
+		if group.ScriptType == "address" {
+			continue
+		}
+		currentCount := group.Count
+		if currentCount < 1 {
+			currentCount = 1
+		}
+		highestUsed := -1
+		for _, watch := range a.state.Watches {
+			if watch.GroupID != group.ID || len(watch.KnownTx) == 0 {
+				continue
+			}
+			if index, ok := derivedPathIndex(watch.Path); ok && index > highestUsed {
+				highestUsed = index
+			}
+		}
+		desired := gap
+		if highestUsed >= 0 && highestUsed+1+gap > desired {
+			desired = highestUsed + 1 + gap
+		}
+		limitError := ""
+		if desired > 500 {
+			desired = 500
+			limitError = fmt.Sprintf("smart discovery reached the 500-address limit before satisfying gap %d", gap)
+		}
+		if desired <= currentCount {
+			group.DiscoveryError = limitError
+			continue
+		}
+		group.DiscoveryError = ""
+		derived, err := bitcoin.DeriveAddresses(group.Source, group.ScriptType, desired, group.IncludeChange)
+		if err != nil {
+			group.DiscoveryError = err.Error()
+			continue
+		}
+		for _, child := range derived {
+			if owner, exists := addressOwners[child.Address]; exists {
+				if owner != group.ID {
+					group.DiscoveryError = "a newly derived address overlaps another watch"
+				}
+				continue
+			}
+			scriptHash, err := bitcoin.ScriptHash(child.Address)
+			if err != nil {
+				group.DiscoveryError = err.Error()
+				continue
+			}
+			a.state.Watches = append(a.state.Watches, Watch{ID: randomID(), GroupID: group.ID, Label: group.Label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
+			addressOwners[child.Address] = group.ID
+		}
+		if group.DiscoveryError == "" {
+			group.Count = desired
+			group.DiscoveryError = limitError
+		}
+	}
+	return nil
+}
+
+func derivedPathIndex(path string) (int, bool) {
+	separator := strings.LastIndexByte(path, '/')
+	if separator < 0 || separator+1 == len(path) {
+		return 0, false
+	}
+	index, err := strconv.Atoi(path[separator+1:])
+	return index, err == nil && index >= 0
 }
 
 func (a *App) deliverPending() {
@@ -755,8 +846,11 @@ func (a *App) groupViewsLocked() []groupView {
 		if group.Category == "" {
 			group.Category = "uncategorized"
 		}
+		if group.ScriptType != "address" {
+			group.ScriptType += fmt.Sprintf(" · smart gap %d", discoveryGap(a.state.DiscoveryGap))
+		}
 		indexes[group.ID] = len(views)
-		views = append(views, groupView{WatchGroup: group})
+		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError})
 	}
 	for _, watch := range a.state.Watches {
 		groupID := watch.GroupID
@@ -857,6 +951,35 @@ func SetPrivacyMode(dataDir string, enabled bool, password string) error {
 		return fmt.Errorf("read state: %w", err)
 	}
 	current.PrivacyMode = enabled
+	b, err = json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode state: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0600); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	return nil
+}
+
+func SetDiscoveryGap(dataDir string, gap int) error {
+	if gap < 1 || gap > 500 {
+		return errors.New("discovery gap must be between 1 and 500")
+	}
+	path := filepath.Join(dataDir, "state.json")
+	var current state
+	b, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(b, &current); err != nil {
+			return fmt.Errorf("decode state: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read state: %w", err)
+	}
+	current.DiscoveryGap = gap
 	b, err = json.MarshalIndent(current, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode state: %w", err)
