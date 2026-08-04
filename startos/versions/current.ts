@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:19',
+  version: '0.1.0:20',
   releaseNotes: {
     en_US:
-      'Adds per-wallet notification direction, amount, and confirmation rules.',
+      'Adds persistent quiet hours and optional daily notification digests.',
     de_DE:
-      'Fügt wallet-spezifische Regeln für Richtung, Betrag und Bestätigungen von Benachrichtigungen hinzu.',
+      'Fügt dauerhafte Ruhezeiten und optionale tägliche Benachrichtigungszusammenfassungen hinzu.',
   },
   migrations: {
     up: async () => {},

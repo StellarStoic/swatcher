@@ -17,6 +17,53 @@ const defaultNostrRelays = [
   'wss://relay.ditto.pub',
 ]
 const inputSpec = InputSpec.of({
+  dailyDigest: Value.toggle({
+    name: 'Daily digest instead of immediate messages',
+    description: 'Combines pending wallet activity into one message per day',
+    default: false,
+  }),
+  digestHour: Value.number({
+    name: 'Daily digest hour',
+    description: 'Hour of day using the UTC offset below',
+    required: true,
+    default: 9,
+    integer: true,
+    min: 0,
+    max: 23,
+    units: 'hour',
+  }),
+  quietHours: Value.toggle({
+    name: 'Enable quiet hours for immediate messages',
+    default: false,
+  }),
+  quietStart: Value.number({
+    name: 'Quiet hours start',
+    required: true,
+    default: 22,
+    integer: true,
+    min: 0,
+    max: 23,
+    units: 'hour',
+  }),
+  quietEnd: Value.number({
+    name: 'Quiet hours end',
+    required: true,
+    default: 7,
+    integer: true,
+    min: 0,
+    max: 23,
+    units: 'hour',
+  }),
+  utcOffset: Value.number({
+    name: 'Local UTC offset',
+    description: 'Whole-hour offset used for quiet hours and daily digests',
+    required: true,
+    default: 0,
+    integer: true,
+    min: -12,
+    max: 14,
+    units: 'hours',
+  }),
   telegramEnabled: Value.toggle({ name: 'Enable Telegram', default: false }),
   telegramToken: Value.text({
     name: 'Telegram bot token',
@@ -116,6 +163,12 @@ export const notifications = sdk.Action.withInput(
     const c = await notificationConfig.read().const(effects)
     const configuredRelays = c?.nostrRelays ?? []
     return {
+      dailyDigest: c?.dailyDigest ?? false,
+      digestHour: c?.digestHour ?? 9,
+      quietHours: c?.quietHours ?? false,
+      quietStart: c?.quietStart ?? 22,
+      quietEnd: c?.quietEnd ?? 7,
+      utcOffset: c?.utcOffset ?? 0,
       telegramEnabled: c?.telegramEnabled ?? false,
       telegramToken: c?.telegramToken || null,
       telegramChatId: c?.telegramChatId || null,
@@ -169,6 +222,12 @@ export const notifications = sdk.Action.withInput(
       .map((x) => x.trim())
       .filter(Boolean)
     await notificationConfig.write(effects, {
+      dailyDigest: input.dailyDigest,
+      digestHour: input.digestHour,
+      quietHours: input.quietHours,
+      quietStart: input.quietStart,
+      quietEnd: input.quietEnd,
+      utcOffset: input.utcOffset,
       telegramEnabled: input.telegramEnabled,
       telegramToken: input.telegramToken?.trim() ?? '',
       telegramChatId: input.telegramChatId?.trim() ?? '',

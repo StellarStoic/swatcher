@@ -77,6 +77,16 @@ only, or disabled; a minimum sat amount; and delivery in the mempool or after
 mempool. Waiting and delivery state persists in `/data/state.json`, preventing
 duplicate alerts after a restart.
 
+## Notification schedule
+
+The **Notifications** action can keep immediate delivery, optionally queue it
+during quiet hours, or combine eligible activity into one daily digest. Hours
+use the configured whole-hour UTC offset. Quiet hours may cross midnight;
+queued immediate alerts are sent after the quiet period ends. Daily digests are
+sent once per local date at or after the selected hour, include up to ten
+activity details plus a remaining count, and persist independent Telegram and
+Nostr delivery dates in `/data/state.json`.
+
 A plain `xpub` does not encode an address type, so the Web UI asks for one only
 when a bare xpub is entered. `ypub` and `zpub` imports infer nested and native
 SegWit respectively, while descriptors are authoritative. Duplicate addresses

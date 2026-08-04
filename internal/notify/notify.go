@@ -33,6 +33,12 @@ type Config struct {
 	NostrSenderNpub       string   `json:"nostrSenderNpub"`
 	NostrAvatar           string   `json:"nostrAvatar"`
 	NostrProfilePublished bool     `json:"nostrProfilePublished"`
+	DailyDigest           bool     `json:"dailyDigest"`
+	DigestHour            int      `json:"digestHour"`
+	QuietHours            bool     `json:"quietHours"`
+	QuietStart            int      `json:"quietStart"`
+	QuietEnd              int      `json:"quietEnd"`
+	UTCOffset             int      `json:"utcOffset"`
 }
 type Sender struct {
 	Path string

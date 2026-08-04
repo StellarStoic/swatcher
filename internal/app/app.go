@@ -77,11 +77,13 @@ type Event struct {
 }
 
 type state struct {
-	Watches      []Watch      `json:"watches"`
-	Events       []Event      `json:"events"`
-	Groups       []WatchGroup `json:"groups,omitempty"`
-	PrivacyMode  bool         `json:"privacyMode,omitempty"`
-	DiscoveryGap int          `json:"discoveryGap,omitempty"`
+	Watches            []Watch      `json:"watches"`
+	Events             []Event      `json:"events"`
+	Groups             []WatchGroup `json:"groups,omitempty"`
+	PrivacyMode        bool         `json:"privacyMode,omitempty"`
+	DiscoveryGap       int          `json:"discoveryGap,omitempty"`
+	LastTelegramDigest string       `json:"lastTelegramDigest,omitempty"`
+	LastNostrDigest    string       `json:"lastNostrDigest,omitempty"`
 }
 
 const defaultDiscoveryGap = 20
@@ -821,6 +823,13 @@ func (a *App) deliverPending() {
 		tipHeight = height
 	}
 	cancel()
+	if c.DailyDigest {
+		a.deliverDigest(c, events, labels, rules, tipHeight, time.Now().UTC())
+		return
+	}
+	if c.QuietHours && notificationQuietNow(c, time.Now().UTC()) {
+		return
+	}
 	for _, event := range events {
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
 			continue
@@ -877,6 +886,126 @@ func (a *App) deliverPending() {
 		_ = a.saveLocked()
 		a.mu.Unlock()
 	}
+}
+
+func notificationQuietNow(c notify.Config, now time.Time) bool {
+	hour := now.Add(time.Duration(c.UTCOffset) * time.Hour).Hour()
+	if c.QuietStart == c.QuietEnd {
+		return true
+	}
+	if c.QuietStart < c.QuietEnd {
+		return hour >= c.QuietStart && hour < c.QuietEnd
+	}
+	return hour >= c.QuietStart || hour < c.QuietEnd
+}
+
+func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]string, rules map[string]WatchGroup, tipHeight int64, now time.Time) {
+	local := now.Add(time.Duration(c.UTCOffset) * time.Hour)
+	date := local.Format("2006-01-02")
+	if local.Hour() < c.DigestHour {
+		return
+	}
+	a.mu.RLock()
+	lastTelegram, lastNostr := a.state.LastTelegramDigest, a.state.LastNostrDigest
+	a.mu.RUnlock()
+	ready := make([]Event, 0, len(events))
+	for _, event := range events {
+		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
+			continue
+		}
+		eligible, waiting := notificationEligible(rules[event.GroupID], event, tipHeight)
+		if waiting {
+			continue
+		}
+		if !eligible {
+			a.markEventDelivery(event, c.TelegramEnabled, c.NostrEnabled)
+			continue
+		}
+		ready = append(ready, event)
+	}
+	if len(ready) == 0 {
+		return
+	}
+	message := digestMessage(ready, labels)
+	tgSent, nrSent := false, false
+	if c.TelegramEnabled && lastTelegram != date {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		if err := a.notifier.Telegram(ctx, c, message); err != nil {
+			log.Printf("Telegram digest failed: %v", err)
+		} else {
+			tgSent = true
+		}
+		cancel()
+	}
+	if c.NostrEnabled && lastNostr != date {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		if err := a.notifier.Nostr(ctx, c, message); err != nil {
+			log.Printf("NIP-17 digest failed: %v", err)
+		} else {
+			nrSent = true
+		}
+		cancel()
+	}
+	if !tgSent && !nrSent {
+		return
+	}
+	a.mu.Lock()
+	for i := range a.state.Events {
+		for _, event := range ready {
+			if a.state.Events[i].GroupID == event.GroupID && a.state.Events[i].TxID == event.TxID {
+				if tgSent {
+					a.state.Events[i].TelegramSent = true
+				}
+				if nrSent {
+					a.state.Events[i].NostrSent = true
+				}
+			}
+		}
+	}
+	if tgSent {
+		a.state.LastTelegramDigest = date
+	}
+	if nrSent {
+		a.state.LastNostrDigest = date
+	}
+	_ = a.saveLocked()
+	a.mu.Unlock()
+}
+
+func (a *App) markEventDelivery(event Event, telegram, nostr bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i := range a.state.Events {
+		if a.state.Events[i].GroupID == event.GroupID && a.state.Events[i].TxID == event.TxID {
+			if telegram {
+				a.state.Events[i].TelegramSent = true
+			}
+			if nostr {
+				a.state.Events[i].NostrSent = true
+			}
+		}
+	}
+	_ = a.saveLocked()
+}
+
+func digestMessage(events []Event, labels map[string]string) string {
+	var message strings.Builder
+	fmt.Fprintf(&message, "s/watcher daily digest: %d activities", len(events))
+	limit := len(events)
+	if limit > 10 {
+		limit = 10
+	}
+	for _, event := range events[:limit] {
+		label := labels[event.GroupID]
+		if label == "" {
+			label = "Bitcoin watch"
+		}
+		fmt.Fprintf(&message, "\n\n%s\n%s · received %d sat · sent %d sat\n%s", label, event.Direction, event.Received, event.Sent, event.TxID)
+	}
+	if len(events) > limit {
+		fmt.Fprintf(&message, "\n\n…and %d more activities.", len(events)-limit)
+	}
+	return message.String()
 }
 
 func notificationEligible(group WatchGroup, event Event, tipHeight int64) (eligible, waiting bool) {

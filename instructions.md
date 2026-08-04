@@ -66,6 +66,13 @@ amount in satoshis; and choose mempool, 1, 3, or 6 confirmations. The default
 is every transaction immediately in the mempool. Confirmation-delayed alerts
 remain pending across service restarts.
 
+In the **Notifications** action, enable quiet hours to defer immediate alerts
+between the selected start and end hours, or enable **Daily digest** to combine
+pending activity into one message per day. Enter the whole-hour offset from UTC
+for your local time. Quiet hours may cross midnight. A daily digest is sent at
+or after its selected local hour and is tracked separately for Telegram and
+Nostr so restarts do not duplicate it.
+
 The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.

@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/s-watcher/s-watcher/internal/electrum"
+	"github.com/s-watcher/s-watcher/internal/notify"
 	"github.com/s-watcher/s-watcher/internal/webauth"
 )
 
@@ -78,6 +79,20 @@ func TestNotificationRules(t *testing.T) {
 				t.Fatalf("notificationEligible() = %v, %v; want %v, %v", eligible, waiting, test.eligible, test.waiting)
 			}
 		})
+	}
+}
+
+func TestNotificationScheduleHelpers(t *testing.T) {
+	c := notify.Config{QuietStart: 22, QuietEnd: 7, UTCOffset: 2}
+	if !notificationQuietNow(c, time.Date(2026, 8, 4, 21, 0, 0, 0, time.UTC)) {
+		t.Fatal("wrapped quiet hours did not include local 23:00")
+	}
+	if notificationQuietNow(c, time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)) {
+		t.Fatal("quiet hours included local noon")
+	}
+	message := digestMessage([]Event{{GroupID: "g", Direction: "received", Received: 42, TxID: "txid"}}, map[string]string{"g": "donations / website"})
+	if !strings.Contains(message, "daily digest: 1 activities") || !strings.Contains(message, "donations / website") || !strings.Contains(message, "42 sat") {
+		t.Fatalf("unexpected digest: %s", message)
 	}
 }
 

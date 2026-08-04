@@ -18,5 +18,11 @@ export const notificationConfig = FileHelper.json(
     nostrSenderNpub: z.string().catch(''),
     nostrAvatar: z.string().catch(''),
     nostrProfilePublished: z.boolean().catch(false),
+    dailyDigest: z.boolean().catch(false),
+    digestHour: z.number().int().min(0).max(23).catch(9),
+    quietHours: z.boolean().catch(false),
+    quietStart: z.number().int().min(0).max(23).catch(22),
+    quietEnd: z.number().int().min(0).max(23).catch(7),
+    utcOffset: z.number().int().min(-12).max(14).catch(0),
   }),
 )
