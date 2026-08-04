@@ -37,6 +37,10 @@ type Snapshot struct {
 	History []HistoryItem
 }
 
+type Header struct {
+	Height int64 `json:"height"`
+}
+
 type Effect struct {
 	Received    uint64
 	Sent        uint64
@@ -68,6 +72,14 @@ func (c *Client) Snapshot(ctx context.Context, scriptHash string) (Snapshot, err
 func (c *Client) Ping(ctx context.Context) error {
 	var result []any
 	return c.call(ctx, "server.version", []any{"s-watcher", "1.4"}, &result)
+}
+
+func (c *Client) TipHeight(ctx context.Context) (int64, error) {
+	var header Header
+	if err := c.call(ctx, "blockchain.headers.subscribe", []any{}, &header); err != nil {
+		return 0, err
+	}
+	return header.Height, nil
 }
 
 // TransactionEffect calculates exactly how many satoshis entered and left a

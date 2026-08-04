@@ -55,6 +55,9 @@ type WatchGroup struct {
 	IncludeChange  bool      `json:"includeChange,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	DiscoveryError string    `json:"discoveryError,omitempty"`
+	NotifyMode     string    `json:"notifyMode,omitempty"`
+	NotifyMinimum  uint64    `json:"notifyMinimum,omitempty"`
+	NotifyAfter    int       `json:"notifyAfter,omitempty"`
 }
 
 type Event struct {
@@ -448,6 +451,36 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only letters, numbers, spaces, and underscores.")
 		return
 	}
+	notifyMode := strings.TrimSpace(r.FormValue("notify_mode"))
+	if notifyMode == "" {
+		notifyMode = "all"
+	}
+	if notifyMode != "all" && notifyMode != "incoming" && notifyMode != "outgoing" && notifyMode != "off" {
+		writeFormError(w, r, http.StatusBadRequest, "Choose a valid notification activity rule.")
+		return
+	}
+	notifyMinimum := uint64(0)
+	if value := r.FormValue("notify_minimum"); value != "" {
+		parsed, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			writeFormError(w, r, http.StatusBadRequest, "The notification minimum must be a non-negative sat amount.")
+			return
+		}
+		notifyMinimum = parsed
+	}
+	notifyAfter := 0
+	if value := r.FormValue("notify_after"); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			writeFormError(w, r, http.StatusBadRequest, "Choose mempool, 1, 3, or 6 confirmations.")
+			return
+		}
+		notifyAfter = parsed
+	}
+	if notifyAfter != 0 && notifyAfter != 1 && notifyAfter != 3 && notifyAfter != 6 {
+		writeFormError(w, r, http.StatusBadRequest, "Choose mempool, 1, 3, or 6 confirmations.")
+		return
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	found := false
@@ -455,6 +488,9 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		if a.state.Groups[i].ID == id {
 			a.state.Groups[i].Label = label
 			a.state.Groups[i].Category = category
+			a.state.Groups[i].NotifyMode = notifyMode
+			a.state.Groups[i].NotifyMinimum = notifyMinimum
+			a.state.Groups[i].NotifyAfter = notifyAfter
 			found = true
 		}
 	}
@@ -770,13 +806,21 @@ func (a *App) deliverPending() {
 	groups := append([]WatchGroup(nil), a.state.Groups...)
 	a.mu.RUnlock()
 	labels := map[string]string{}
+	rules := map[string]WatchGroup{}
 	for _, g := range groups {
+		rules[g.ID] = g
 		if g.Category != "" {
 			labels[g.ID] = g.Category + " / " + g.Label
 		} else {
 			labels[g.ID] = g.Label
 		}
 	}
+	tipHeight := int64(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if height, tipErr := a.client.TipHeight(ctx); tipErr == nil {
+		tipHeight = height
+	}
+	cancel()
 	for _, event := range events {
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
 			continue
@@ -784,6 +828,26 @@ func (a *App) deliverPending() {
 		label := labels[event.GroupID]
 		if label == "" {
 			label = "Bitcoin watch"
+		}
+		eligible, waiting := notificationEligible(rules[event.GroupID], event, tipHeight)
+		if waiting {
+			continue
+		}
+		if !eligible {
+			a.mu.Lock()
+			for i := range a.state.Events {
+				if a.state.Events[i].GroupID == event.GroupID && a.state.Events[i].TxID == event.TxID {
+					if c.TelegramEnabled {
+						a.state.Events[i].TelegramSent = true
+					}
+					if c.NostrEnabled {
+						a.state.Events[i].NostrSent = true
+					}
+				}
+			}
+			_ = a.saveLocked()
+			a.mu.Unlock()
+			continue
 		}
 		msg := notify.Message(label, event.Direction, event.Received, event.Sent, event.TxID, event.Height)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -813,6 +877,42 @@ func (a *App) deliverPending() {
 		_ = a.saveLocked()
 		a.mu.Unlock()
 	}
+}
+
+func notificationEligible(group WatchGroup, event Event, tipHeight int64) (eligible, waiting bool) {
+	mode := group.NotifyMode
+	if mode == "" {
+		mode = "all"
+	}
+	if mode == "off" {
+		return false, false
+	}
+	if mode == "incoming" && event.Direction != "received" {
+		return false, false
+	}
+	if mode == "outgoing" && event.Direction != "sent" {
+		return false, false
+	}
+	amount := event.Received
+	if event.Sent > amount {
+		amount = event.Sent
+	}
+	if amount < group.NotifyMinimum {
+		return false, false
+	}
+	if group.NotifyAfter > 0 {
+		if event.Height <= 0 {
+			return false, true
+		}
+		confirmations := 1
+		if tipHeight >= event.Height {
+			confirmations = int(tipHeight-event.Height) + 1
+		}
+		if confirmations < group.NotifyAfter {
+			return false, true
+		}
+	}
+	return true, false
 }
 
 func (a *App) eventExistsLocked(groupID, txID string) bool {

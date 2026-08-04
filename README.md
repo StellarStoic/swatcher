@@ -40,6 +40,8 @@ over a network can obtain its corresponding source from the
 - Persist watches and events in `/data/state.json`.
 - Deliver retryable Telegram Bot API alerts and NIP-17 private Nostr messages.
 - Persist per-channel delivery state so restarts do not duplicate alerts.
+- Configure each watched wallet for all, incoming-only, outgoing-only, or no
+  alerts, with a minimum sat amount and mempool/1/3/6-confirmation timing.
 - Generate and retain a dedicated Nostr sender identity under `/data`, with a
   deterministic DiceBear avatar and configurable sender name.
 - Require an Argon2id-protected password for the Web Interface and provide a
@@ -65,6 +67,15 @@ queries. Decreasing it never deletes addresses already discovered. A maximum
 of 500 addresses per branch bounds resource usage. Plain addresses are not
 affected. If activity near the ceiling prevents satisfying the selected gap,
 the Web Interface shows a warning on that watch.
+
+## Per-wallet notification rules
+
+Select **Edit** on a watched wallet to choose which activity produces Telegram
+or NIP-17 alerts. Rules support every transaction, incoming only, outgoing
+only, or disabled; a minimum sat amount; and delivery in the mempool or after
+1, 3, or 6 confirmations. The default remains every transaction in the
+mempool. Waiting and delivery state persists in `/data/state.json`, preventing
+duplicate alerts after a restart.
 
 A plain `xpub` does not encode an address type, so the Web UI asks for one only
 when a bare xpub is entered. `ypub` and `zpub` imports infer nested and native

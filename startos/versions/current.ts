@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:18',
+  version: '0.1.0:19',
   releaseNotes: {
     en_US:
-      'Warns when an incoming unconfirmed transaction explicitly signals Replace-by-Fee.',
+      'Adds per-wallet notification direction, amount, and confirmation rules.',
     de_DE:
-      'Warnt bei eingehenden unbestätigten Transaktionen, die ausdrücklich Replace-by-Fee signalisieren.',
+      'Fügt wallet-spezifische Regeln für Richtung, Betrag und Bestätigungen von Benachrichtigungen hinzu.',
   },
   migrations: {
     up: async () => {},

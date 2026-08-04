@@ -60,6 +60,12 @@ watch list, select **Edit** to reveal the name and group inputs, **Save** to
 apply them, or **Cancel** to discard the unsaved values. Use **Sort by** to
 order watches by stack size, name, group, date added, latest change, or type.
 
+The same **Edit** panel controls notifications for that wallet. Choose every
+transaction, incoming only, outgoing only, or notifications off; set a minimum
+amount in satoshis; and choose mempool, 1, 3, or 6 confirmations. The default
+is every transaction immediately in the mempool. Confirmation-delayed alerts
+remain pending across service restarts.
+
 The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.

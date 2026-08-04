@@ -54,6 +54,33 @@ func TestMovementSignal(t *testing.T) {
 	}
 }
 
+func TestNotificationRules(t *testing.T) {
+	tests := []struct {
+		name     string
+		group    WatchGroup
+		event    Event
+		tip      int64
+		eligible bool
+		waiting  bool
+	}{
+		{name: "default mempool", event: Event{Direction: "received", Received: 1}, eligible: true},
+		{name: "incoming excludes sent", group: WatchGroup{NotifyMode: "incoming"}, event: Event{Direction: "sent", Sent: 20}},
+		{name: "minimum", group: WatchGroup{NotifyMinimum: 10_000}, event: Event{Direction: "received", Received: 9_999}},
+		{name: "waits for confirmation", group: WatchGroup{NotifyAfter: 1}, event: Event{Direction: "received", Received: 10}, waiting: true},
+		{name: "waits for three", group: WatchGroup{NotifyAfter: 3}, event: Event{Direction: "received", Received: 10, Height: 100}, tip: 101, waiting: true},
+		{name: "three confirmations", group: WatchGroup{NotifyAfter: 3}, event: Event{Direction: "received", Received: 10, Height: 100}, tip: 102, eligible: true},
+		{name: "disabled", group: WatchGroup{NotifyMode: "off"}, event: Event{Direction: "received", Received: 10}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			eligible, waiting := notificationEligible(test.group, test.event, test.tip)
+			if eligible != test.eligible || waiting != test.waiting {
+				t.Fatalf("notificationEligible() = %v, %v; want %v, %v", eligible, waiting, test.eligible, test.waiting)
+			}
+		})
+	}
+}
+
 func TestWatchSortModes(t *testing.T) {
 	older := time.Unix(100, 0)
 	newer := time.Unix(200, 0)
@@ -327,7 +354,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
