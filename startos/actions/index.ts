@@ -4,11 +4,13 @@
 import { sdk } from '../sdk'
 import { notifications } from './notifications'
 import { privacyMode } from './privacyMode'
+import { privacyIndicators } from './privacyIndicators'
 import { smartDiscovery } from './smartDiscovery'
 import { webPassword } from './webPassword'
 
 export const actions = sdk.Actions.of()
   .addAction(privacyMode)
+  .addAction(privacyIndicators)
   .addAction(smartDiscovery)
   .addAction(notifications)
   .addAction(webPassword)

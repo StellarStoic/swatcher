@@ -73,6 +73,13 @@ for your local time. Quiet hours may cross midnight. A daily digest is sent at
 or after its selected local hour and is tracked separately for Telegram and
 Nostr so restarts do not duplicate it.
 
+Open **Actions → General → Privacy Indicators** to control informational
+address-reuse, small-deposit, and combined-wallet badges. The small-deposit
+threshold defaults to 1,000 sat and is descriptive rather than a claim that an
+output is technically uneconomical to spend. Indicators use only local Electrs
+data and do not send notifications. Address-reuse counts cover receipts
+observed after this feature is installed.
+
 The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.

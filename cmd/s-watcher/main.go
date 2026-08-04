@@ -63,6 +63,28 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 6 && os.Args[1] == "set-privacy-indicators" {
+		threshold, err := strconv.ParseUint(os.Args[2], 10, 64)
+		if err != nil || threshold == 0 {
+			log.Fatal("small-deposit threshold must be a positive sat amount")
+		}
+		reuse, err := parseEnabled(os.Args[3])
+		if err != nil {
+			log.Fatal(err)
+		}
+		small, err := parseEnabled(os.Args[4])
+		if err != nil {
+			log.Fatal(err)
+		}
+		combined, err := parseEnabled(os.Args[5])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := app.SetPrivacyIndicators(env("SWATCHER_DATA", "/data"), threshold, reuse, small, combined); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "test-notification" {
 		if err := testNotification(os.Args[2]); err != nil {
 			log.Fatal(err)

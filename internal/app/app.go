@@ -61,29 +61,35 @@ type WatchGroup struct {
 }
 
 type Event struct {
-	WatchID      string    `json:"watchId"`
-	GroupID      string    `json:"groupId,omitempty"`
-	TxID         string    `json:"txid"`
-	Height       int64     `json:"height"`
-	Direction    string    `json:"direction"`
-	Received     uint64    `json:"received"`
-	Sent         uint64    `json:"sent"`
-	Net          int64     `json:"net"`
-	OPReturn     []string  `json:"opReturn,omitempty"`
-	Replaceable  bool      `json:"replaceable,omitempty"`
-	SeenAt       time.Time `json:"seenAt"`
-	TelegramSent bool      `json:"telegramSent,omitempty"`
-	NostrSent    bool      `json:"nostrSent,omitempty"`
+	WatchID           string    `json:"watchId"`
+	GroupID           string    `json:"groupId,omitempty"`
+	TxID              string    `json:"txid"`
+	Height            int64     `json:"height"`
+	Direction         string    `json:"direction"`
+	Received          uint64    `json:"received"`
+	Sent              uint64    `json:"sent"`
+	Net               int64     `json:"net"`
+	OPReturn          []string  `json:"opReturn,omitempty"`
+	Replaceable       bool      `json:"replaceable,omitempty"`
+	ReceivedAddresses []string  `json:"receivedAddresses,omitempty"`
+	SeenAt            time.Time `json:"seenAt"`
+	TelegramSent      bool      `json:"telegramSent,omitempty"`
+	NostrSent         bool      `json:"nostrSent,omitempty"`
 }
 
 type state struct {
-	Watches            []Watch      `json:"watches"`
-	Events             []Event      `json:"events"`
-	Groups             []WatchGroup `json:"groups,omitempty"`
-	PrivacyMode        bool         `json:"privacyMode,omitempty"`
-	DiscoveryGap       int          `json:"discoveryGap,omitempty"`
-	LastTelegramDigest string       `json:"lastTelegramDigest,omitempty"`
-	LastNostrDigest    string       `json:"lastNostrDigest,omitempty"`
+	Watches                     []Watch      `json:"watches"`
+	Events                      []Event      `json:"events"`
+	Groups                      []WatchGroup `json:"groups,omitempty"`
+	PrivacyMode                 bool         `json:"privacyMode,omitempty"`
+	DiscoveryGap                int          `json:"discoveryGap,omitempty"`
+	LastTelegramDigest          string       `json:"lastTelegramDigest,omitempty"`
+	LastNostrDigest             string       `json:"lastNostrDigest,omitempty"`
+	PrivacyIndicatorsConfigured bool         `json:"privacyIndicatorsConfigured,omitempty"`
+	AddressReuseIndicators      bool         `json:"addressReuseIndicators,omitempty"`
+	SmallDepositIndicators      bool         `json:"smallDepositIndicators,omitempty"`
+	CombinedWalletIndicators    bool         `json:"combinedWalletIndicators,omitempty"`
+	SmallDepositThreshold       uint64       `json:"smallDepositThreshold,omitempty"`
 }
 
 const defaultDiscoveryGap = 20
@@ -93,6 +99,17 @@ func discoveryGap(value int) int {
 		return defaultDiscoveryGap
 	}
 	return value
+}
+
+func privacyIndicatorSettings(value state) (reuse, small, combined bool, threshold uint64) {
+	if !value.PrivacyIndicatorsConfigured {
+		return true, true, true, 1_000
+	}
+	threshold = value.SmallDepositThreshold
+	if threshold == 0 {
+		threshold = 1_000
+	}
+	return value.AddressReuseIndicators, value.SmallDepositIndicators, value.CombinedWalletIndicators, threshold
 }
 
 type groupView struct {
@@ -111,8 +128,12 @@ type groupView struct {
 
 type eventView struct {
 	Event
-	DisplayAmount string
-	DisplayTxID   string
+	DisplayAmount         string
+	DisplayTxID           string
+	ReuseCount            int
+	SmallDeposit          bool
+	CombinedGroups        int
+	SmallDepositThreshold uint64
 }
 
 type pageData struct {
@@ -200,9 +221,35 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 		data.GroupSuggestions = append(data.GroupSuggestions, suggestion)
 	}
 	sort.Strings(data.GroupSuggestions)
+	reuseEnabled, smallEnabled, combinedEnabled, smallThreshold := privacyIndicatorSettings(a.state)
+	receiptCounts := map[string]int{}
+	txGroups := map[string]map[string]bool{}
+	for _, event := range a.state.Events {
+		if txGroups[event.TxID] == nil {
+			txGroups[event.TxID] = map[string]bool{}
+		}
+		txGroups[event.TxID][event.GroupID] = true
+	}
 	for _, event := range a.state.Events {
 		view := eventView{Event: event, DisplayTxID: event.TxID}
 		view.DisplayAmount = eventAmount(event)
+		for _, address := range event.ReceivedAddresses {
+			receiptCounts[address]++
+			if receiptCounts[address] > view.ReuseCount {
+				view.ReuseCount = receiptCounts[address]
+			}
+		}
+		if !reuseEnabled || view.ReuseCount < 2 {
+			view.ReuseCount = 0
+		}
+		view.SmallDeposit = smallEnabled && event.Received > 0 && event.Received < smallThreshold
+		view.SmallDepositThreshold = smallThreshold
+		if combinedEnabled {
+			view.CombinedGroups = len(txGroups[event.TxID])
+			if view.CombinedGroups < 2 {
+				view.CombinedGroups = 0
+			}
+		}
 		if a.state.PrivacyMode {
 			view.DisplayTxID = maskIdentifier(event.TxID)
 			view.DisplayAmount = legacyMask(8)
@@ -605,6 +652,7 @@ func (a *App) poll() {
 	watches := append([]Watch(nil), a.state.Watches...)
 	a.mu.RUnlock()
 	groupScripts := make(map[string][][]byte)
+	groupScriptAddresses := make(map[string]map[string]string)
 	for _, watch := range watches {
 		groupID := watch.GroupID
 		if groupID == "" {
@@ -613,6 +661,10 @@ func (a *App) poll() {
 		script, err := bitcoin.ScriptPubKey(watch.Address)
 		if err == nil {
 			groupScripts[groupID] = append(groupScripts[groupID], script)
+			if groupScriptAddresses[groupID] == nil {
+				groupScriptAddresses[groupID] = map[string]string{}
+			}
+			groupScriptAddresses[groupID][string(script)] = watch.Address
 		}
 	}
 	for _, watch := range watches {
@@ -661,18 +713,25 @@ func (a *App) poll() {
 				if current.Initialized && !known[item.TxHash] {
 					if !a.eventExistsLocked(groupID, item.TxHash) {
 						effect := effects[item.TxHash]
+						receivedAddresses := make([]string, 0, len(effect.ReceivedScripts))
+						for _, script := range effect.ReceivedScripts {
+							if address := groupScriptAddresses[groupID][script]; address != "" {
+								receivedAddresses = append(receivedAddresses, address)
+							}
+						}
 						a.state.Events = append(a.state.Events, Event{
-							WatchID:     current.ID,
-							GroupID:     groupID,
-							TxID:        item.TxHash,
-							Height:      item.Height,
-							Direction:   direction(effect),
-							Received:    effect.Received,
-							Sent:        effect.Sent,
-							Net:         int64(effect.Received) - int64(effect.Sent),
-							OPReturn:    effect.OPReturn,
-							Replaceable: effect.Replaceable,
-							SeenAt:      time.Now().UTC(),
+							WatchID:           current.ID,
+							GroupID:           groupID,
+							TxID:              item.TxHash,
+							Height:            item.Height,
+							Direction:         direction(effect),
+							Received:          effect.Received,
+							Sent:              effect.Sent,
+							Net:               int64(effect.Received) - int64(effect.Sent),
+							OPReturn:          effect.OPReturn,
+							Replaceable:       effect.Replaceable,
+							ReceivedAddresses: receivedAddresses,
+							SeenAt:            time.Now().UTC(),
 						})
 					}
 				}
@@ -1211,6 +1270,39 @@ func SetDiscoveryGap(dataDir string, gap int) error {
 		return fmt.Errorf("read state: %w", err)
 	}
 	current.DiscoveryGap = gap
+	b, err = json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode state: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0600); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	return nil
+}
+
+func SetPrivacyIndicators(dataDir string, threshold uint64, reuse, small, combined bool) error {
+	if threshold == 0 {
+		return errors.New("small-deposit threshold must be positive")
+	}
+	path := filepath.Join(dataDir, "state.json")
+	var current state
+	b, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(b, &current); err != nil {
+			return fmt.Errorf("decode state: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read state: %w", err)
+	}
+	current.PrivacyIndicatorsConfigured = true
+	current.AddressReuseIndicators = reuse
+	current.SmallDepositIndicators = small
+	current.CombinedWalletIndicators = combined
+	current.SmallDepositThreshold = threshold
 	b, err = json.MarshalIndent(current, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode state: %w", err)

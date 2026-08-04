@@ -87,6 +87,16 @@ sent once per local date at or after the selected hour, include up to ten
 activity details plus a remaining count, and persist independent Telegram and
 Nostr delivery dates in `/data/state.json`.
 
+## Privacy indicators
+
+The **Privacy Indicators** action controls informational badges for repeated
+receipts to the same observed address, incoming amounts below a configurable
+threshold (1,000 sat by default), and transactions involving more than one
+watched wallet. These observations use only locally fetched transaction data.
+They do not trigger notifications. Address-reuse counts begin with activity
+recorded by a version that supports the indicator; existing historical events
+without received-address metadata are not guessed.
+
 A plain `xpub` does not encode an address type, so the Web UI asks for one only
 when a bare xpub is entered. `ypub` and `zpub` imports infer nested and native
 SegWit respectively, while descriptors are authoritative. Duplicate addresses

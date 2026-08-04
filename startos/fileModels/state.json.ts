@@ -10,6 +10,11 @@ export const stateConfig = FileHelper.json(
     .object({
       privacyMode: z.boolean().catch(false),
       discoveryGap: z.number().int().min(1).max(500).catch(20),
+      privacyIndicatorsConfigured: z.boolean().catch(false),
+      addressReuseIndicators: z.boolean().catch(true),
+      smallDepositIndicators: z.boolean().catch(true),
+      combinedWalletIndicators: z.boolean().catch(true),
+      smallDepositThreshold: z.number().int().positive().catch(1000),
     })
     .passthrough(),
 )

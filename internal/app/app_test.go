@@ -268,6 +268,48 @@ func TestSetDiscoveryGapPersistsValidatedValue(t *testing.T) {
 	}
 }
 
+func TestSetPrivacyIndicatorsPersistsSettings(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := SetPrivacyIndicators(dataDir, 0, true, true, true); err == nil {
+		t.Fatal("accepted a zero small-deposit threshold")
+	}
+	if err := SetPrivacyIndicators(dataDir, 2_500, true, false, true); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved state
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if !saved.PrivacyIndicatorsConfigured || !saved.AddressReuseIndicators || saved.SmallDepositIndicators || !saved.CombinedWalletIndicators || saved.SmallDepositThreshold != 2_500 {
+		t.Fatalf("unexpected privacy indicator settings: %+v", saved)
+	}
+}
+
+func TestPrivacyIndicatorsRenderAsInformationalBadges(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{{ID: "g1", Label: "one"}, {ID: "g2", Label: "two"}}
+	a.state.Events = []Event{
+		{GroupID: "g1", TxID: "first", Direction: "received", Received: 500, ReceivedAddresses: []string{"bc1qreuse"}, SeenAt: time.Now()},
+		{GroupID: "g1", TxID: "shared", Direction: "received", Received: 600, ReceivedAddresses: []string{"bc1qreuse"}, SeenAt: time.Now()},
+		{GroupID: "g2", TxID: "shared", Direction: "sent", Sent: 600, SeenAt: time.Now()},
+	}
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, text := range []string{"Reused address · 2 observed receipts", "Small deposit · below 1000 sat", "Combined funds from 2 watched wallets"} {
+		if !strings.Contains(body, text) {
+			t.Fatalf("missing privacy indicator %q: %s", text, body)
+		}
+	}
+}
+
 func TestSmartDiscoveryReportsUnsatisfiedSafetyLimit(t *testing.T) {
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {

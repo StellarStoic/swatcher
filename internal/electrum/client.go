@@ -42,10 +42,11 @@ type Header struct {
 }
 
 type Effect struct {
-	Received    uint64
-	Sent        uint64
-	OPReturn    []string
-	Replaceable bool
+	Received        uint64
+	Sent            uint64
+	OPReturn        []string
+	Replaceable     bool
+	ReceivedScripts []string
 }
 
 type response struct {
@@ -101,6 +102,7 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 		}
 		if watched[string(output.Script)] {
 			effect.Received += output.Value
+			effect.ReceivedScripts = append(effect.ReceivedScripts, string(output.Script))
 		}
 	}
 	for _, input := range tx.Inputs {
