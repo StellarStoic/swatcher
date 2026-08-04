@@ -40,6 +40,7 @@ type Snapshot struct {
 type Effect struct {
 	Received uint64
 	Sent     uint64
+	OPReturn []string
 }
 
 type response struct {
@@ -82,6 +83,9 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 		watched[string(script)] = true
 	}
 	for _, output := range tx.Outputs {
+		if message, ok := bitcoin.OPReturnText(output.Script); ok {
+			effect.OPReturn = append(effect.OPReturn, message)
+		}
 		if watched[string(output.Script)] {
 			effect.Received += output.Value
 		}

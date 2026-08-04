@@ -65,6 +65,7 @@ type Event struct {
 	Received     uint64    `json:"received"`
 	Sent         uint64    `json:"sent"`
 	Net          int64     `json:"net"`
+	OPReturn     []string  `json:"opReturn,omitempty"`
 	SeenAt       time.Time `json:"seenAt"`
 	TelegramSent bool      `json:"telegramSent,omitempty"`
 	NostrSent    bool      `json:"nostrSent,omitempty"`
@@ -622,6 +623,7 @@ func (a *App) poll() {
 							Received:  effect.Received,
 							Sent:      effect.Sent,
 							Net:       int64(effect.Received) - int64(effect.Sent),
+							OPReturn:  effect.OPReturn,
 							SeenAt:    time.Now().UTC(),
 						})
 					}

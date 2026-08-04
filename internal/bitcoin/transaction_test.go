@@ -54,3 +54,27 @@ func TestParseRejectsTruncatedTransaction(t *testing.T) {
 		t.Fatal("accepted truncated transaction")
 	}
 }
+
+func TestOPReturnText(t *testing.T) {
+	tests := []struct {
+		name   string
+		script []byte
+		want   string
+		ok     bool
+	}{
+		{name: "direct push", script: append([]byte{0x6a, 11}, []byte("hello world")...), want: "hello world", ok: true},
+		{name: "pushdata1", script: append([]byte{0x6a, 0x4c, 5}, []byte("hello")...), want: "hello", ok: true},
+		{name: "multiple pushes", script: append(append([]byte{0x6a, 5}, []byte("hello")...), append([]byte{6}, []byte(" world")...)...), want: "hello world", ok: true},
+		{name: "binary", script: []byte{0x6a, 2, 0xff, 0x00}},
+		{name: "not op return", script: []byte{0x51, 1, 'a'}},
+		{name: "truncated push", script: []byte{0x6a, 3, 'a'}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := OPReturnText(test.script)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("OPReturnText() = %q, %v; want %q, %v", got, ok, test.want, test.ok)
+			}
+		})
+	}
+}

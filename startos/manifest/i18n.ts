@@ -8,9 +8,9 @@ export const short = {
 
 export const long = {
   en_US:
-    's/watcher detects confirmed and mempool activity for watch-only Bitcoin addresses without contacting third-party services.',
+    's/watcher privately monitors Bitcoin addresses for any incoming and outgoing transactions using your own StartOS node, with optional notifications via NIP-17 encrypted Nostr messages or Telegram.',
   de_DE:
-    's/watcher erkennt bestätigte und unbestätigte Aktivitäten für Bitcoin-Watch-Only-Adressen, ohne Dienste Dritter zu kontaktieren.',
+    's/watcher überwacht Bitcoin-Adressen privat über deinen eigenen StartOS-Node auf ein- und ausgehende Transaktionen und benachrichtigt dich optional per verschlüsselter NIP-17-Nostr-Nachricht oder Telegram.',
 }
 
 export const electrsDescription = {

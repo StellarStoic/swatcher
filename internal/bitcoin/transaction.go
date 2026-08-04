@@ -8,6 +8,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type Transaction struct {
@@ -23,6 +26,59 @@ type TxInput struct {
 type TxOutput struct {
 	Value  uint64
 	Script []byte
+}
+
+// OPReturnText returns a human-readable UTF-8 payload from a standard
+// OP_RETURN script. Binary protocol data and malformed push operations are
+// intentionally ignored rather than shown as misleading text.
+func OPReturnText(script []byte) (string, bool) {
+	if len(script) < 2 || script[0] != 0x6a {
+		return "", false
+	}
+	payload := make([]byte, 0, len(script)-1)
+	for position := 1; position < len(script); {
+		opcode := script[position]
+		position++
+		var size int
+		switch {
+		case opcode == 0:
+			continue
+		case opcode <= 75:
+			size = int(opcode)
+		case opcode == 0x4c:
+			if position >= len(script) {
+				return "", false
+			}
+			size = int(script[position])
+			position++
+		case opcode == 0x4d:
+			if position+2 > len(script) {
+				return "", false
+			}
+			size = int(binary.LittleEndian.Uint16(script[position : position+2]))
+			position += 2
+		default:
+			return "", false
+		}
+		if size > len(script)-position || len(payload)+size > 1024 {
+			return "", false
+		}
+		payload = append(payload, script[position:position+size]...)
+		position += size
+	}
+	if !utf8.Valid(payload) {
+		return "", false
+	}
+	message := strings.TrimSpace(string(payload))
+	if message == "" {
+		return "", false
+	}
+	for _, character := range message {
+		if !unicode.IsPrint(character) && character != '\n' && character != '\r' && character != '\t' {
+			return "", false
+		}
+	}
+	return message, true
 }
 
 // ParseTransaction decodes the input references and outputs needed to compute

@@ -1,5 +1,9 @@
 # s/watcher
 
+s/watcher privately monitors Bitcoin addresses for incoming and outgoing
+transactions using your own StartOS node, with optional notifications via
+NIP-17 encrypted Nostr messages or Telegram.
+
 Copyright (C) 2026 StellarStoic. s/watcher is free software licensed under the
 GNU Affero General Public License, version 3 or (at your option) any later
 version, and is provided without warranty. The license and corresponding source
@@ -50,6 +54,10 @@ order watches by stack size, name, group, date added, latest change, or type.
 The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.
+
+When newly detected activity contains a human-readable UTF-8 message in an
+OP_RETURN output, it appears beneath the transaction ID on a light gray label.
+Binary OP_RETURN protocol data is not displayed.
 
 The Web UI supports both StartOS LAN and Tor addresses. Same-origin actions
 remain accepted when the StartOS proxy presents a different internal hostname.

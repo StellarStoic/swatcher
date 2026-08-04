@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:15',
+  version: '0.1.0:16',
   releaseNotes: {
     en_US:
-      'Fixes legitimate Web Interface actions being rejected when accessed through the StartOS Tor proxy.',
+      'Displays human-readable OP_RETURN messages and improves the service description.',
     de_DE:
-      'Behebt abgelehnte legitime Aktionen der Weboberfläche beim Zugriff über den StartOS-Tor-Proxy.',
+      'Zeigt lesbare OP_RETURN-Nachrichten an und verbessert die Dienstbeschreibung.',
   },
   migrations: {
     up: async () => {},

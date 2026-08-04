@@ -1,8 +1,9 @@
 # s/watcher
 
-`s/watcher` is a small, self-hosted Bitcoin watch-only activity monitor for
-StartOS 0.4. It talks only to the Electrs service installed on the same StartOS
-server.
+`s/watcher` privately monitors Bitcoin addresses for any incoming and outgoing
+transactions using your own StartOS node, with optional notifications via
+NIP-17 encrypted Nostr messages or Telegram. It talks only to the Electrs
+service installed on the same StartOS server.
 
 Copyright (C) 2026 StellarStoic.
 
@@ -23,6 +24,8 @@ over a network can obtain its corresponding source from the
 - Convert addresses locally to Electrum script hashes.
 - Poll Electrs for confirmed and mempool history.
 - Resolve transaction inputs and outputs through Electrs.
+- Decode and display printable UTF-8 messages from OP_RETURN transaction
+  outputs while ignoring binary payloads.
 - Consolidate activity across every derived address in a watch, classify new
   transactions as received, sent, or self-transfer, and show exact amounts.
 - Keep watch names and groups as read-only summaries until explicitly edited,

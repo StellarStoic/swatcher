@@ -115,10 +115,11 @@ func TestTemplatesEscapeStoredValues(t *testing.T) {
 	}
 	payload := `<script>alert("xss")</script>`
 	a.state.Groups = []WatchGroup{{ID: "group", Label: payload, Category: payload, Source: payload, ScriptType: "address"}}
+	a.state.Events = []Event{{GroupID: "group", TxID: strings.Repeat("a", 64), Direction: "received", OPReturn: []string{payload}, SeenAt: time.Now()}}
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") {
+	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") {
 		t.Fatalf("stored values were not safely HTML-escaped: %s", body)
 	}
 }
