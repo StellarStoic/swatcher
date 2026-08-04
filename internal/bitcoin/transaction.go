@@ -21,11 +21,23 @@ type Transaction struct {
 type TxInput struct {
 	PreviousTxID string
 	PreviousVout uint32
+	Sequence     uint32
 }
 
 type TxOutput struct {
 	Value  uint64
 	Script []byte
+}
+
+// SignalsRBF reports explicit opt-in Replace-by-Fee signaling as defined by
+// BIP125: at least one input has an nSequence below 0xfffffffe.
+func (tx Transaction) SignalsRBF() bool {
+	for _, input := range tx.Inputs {
+		if input.Sequence < 0xfffffffe {
+			return true
+		}
+	}
+	return false
 }
 
 // OPReturnText returns a human-readable UTF-8 payload from a standard
@@ -121,11 +133,12 @@ func ParseTransaction(rawHex string) (Transaction, error) {
 		if _, err := r.takeSize(scriptLength); err != nil {
 			return Transaction{}, fmt.Errorf("read input %d script: %w", i, err)
 		}
-		if _, err := r.take(4); err != nil {
+		sequenceBytes, err := r.take(4)
+		if err != nil {
 			return Transaction{}, fmt.Errorf("read input %d sequence: %w", i, err)
 		}
 		reverse(previous)
-		tx.Inputs = append(tx.Inputs, TxInput{PreviousTxID: hex.EncodeToString(previous), PreviousVout: binary.LittleEndian.Uint32(voutBytes)})
+		tx.Inputs = append(tx.Inputs, TxInput{PreviousTxID: hex.EncodeToString(previous), PreviousVout: binary.LittleEndian.Uint32(voutBytes), Sequence: binary.LittleEndian.Uint32(sequenceBytes)})
 	}
 	outputCount, err := r.varInt()
 	if err != nil {

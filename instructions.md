@@ -68,6 +68,10 @@ When newly detected activity contains a human-readable UTF-8 message in an
 OP_RETURN output, it appears beneath the transaction ID on a light gray label.
 Binary OP_RETURN protocol data is not displayed.
 
+An incoming unconfirmed transaction that explicitly signals Replace-by-Fee
+shows an amber **Replaceable — do not treat as final until confirmed.** badge.
+The warning disappears after Electrs reports a block confirmation.
+
 The Web UI supports both StartOS LAN and Tor addresses. Same-origin actions
 remain accepted when the StartOS proxy presents a different internal hostname.
 

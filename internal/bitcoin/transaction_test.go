@@ -25,7 +25,7 @@ func TestParseLegacyTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tx.Inputs) != 1 || tx.Inputs[0].PreviousVout != 2 {
+	if len(tx.Inputs) != 1 || tx.Inputs[0].PreviousVout != 2 || tx.Inputs[0].Sequence != 0xffffffff {
 		t.Fatalf("unexpected inputs: %+v", tx.Inputs)
 	}
 	if tx.Inputs[0].PreviousTxID != "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100" {
@@ -33,6 +33,17 @@ func TestParseLegacyTransaction(t *testing.T) {
 	}
 	if len(tx.Outputs) != 1 || tx.Outputs[0].Value != 5_000 || hex.EncodeToString(tx.Outputs[0].Script) != "512102" {
 		t.Fatalf("unexpected outputs: %+v", tx.Outputs)
+	}
+}
+
+func TestSignalsRBF(t *testing.T) {
+	if !(Transaction{Inputs: []TxInput{{Sequence: 0xfffffffd}}}).SignalsRBF() {
+		t.Fatal("transaction with sequence 0xfffffffd did not signal RBF")
+	}
+	for _, sequence := range []uint32{0xfffffffe, 0xffffffff} {
+		if (Transaction{Inputs: []TxInput{{Sequence: sequence}}}).SignalsRBF() {
+			t.Fatalf("transaction with sequence %#x incorrectly signaled RBF", sequence)
+		}
 	}
 }
 

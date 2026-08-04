@@ -38,9 +38,10 @@ type Snapshot struct {
 }
 
 type Effect struct {
-	Received uint64
-	Sent     uint64
-	OPReturn []string
+	Received    uint64
+	Sent        uint64
+	OPReturn    []string
+	Replaceable bool
 }
 
 type response struct {
@@ -77,7 +78,7 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 	if err != nil {
 		return Effect{}, err
 	}
-	var effect Effect
+	effect := Effect{Replaceable: tx.SignalsRBF()}
 	watched := make(map[string]bool, len(scripts))
 	for _, script := range scripts {
 		watched[string(script)] = true

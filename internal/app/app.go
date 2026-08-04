@@ -67,6 +67,7 @@ type Event struct {
 	Sent         uint64    `json:"sent"`
 	Net          int64     `json:"net"`
 	OPReturn     []string  `json:"opReturn,omitempty"`
+	Replaceable  bool      `json:"replaceable,omitempty"`
 	SeenAt       time.Time `json:"seenAt"`
 	TelegramSent bool      `json:"telegramSent,omitempty"`
 	NostrSent    bool      `json:"nostrSent,omitempty"`
@@ -623,16 +624,17 @@ func (a *App) poll() {
 					if !a.eventExistsLocked(groupID, item.TxHash) {
 						effect := effects[item.TxHash]
 						a.state.Events = append(a.state.Events, Event{
-							WatchID:   current.ID,
-							GroupID:   groupID,
-							TxID:      item.TxHash,
-							Height:    item.Height,
-							Direction: direction(effect),
-							Received:  effect.Received,
-							Sent:      effect.Sent,
-							Net:       int64(effect.Received) - int64(effect.Sent),
-							OPReturn:  effect.OPReturn,
-							SeenAt:    time.Now().UTC(),
+							WatchID:     current.ID,
+							GroupID:     groupID,
+							TxID:        item.TxHash,
+							Height:      item.Height,
+							Direction:   direction(effect),
+							Received:    effect.Received,
+							Sent:        effect.Sent,
+							Net:         int64(effect.Received) - int64(effect.Sent),
+							OPReturn:    effect.OPReturn,
+							Replaceable: effect.Replaceable,
+							SeenAt:      time.Now().UTC(),
 						})
 					}
 				}

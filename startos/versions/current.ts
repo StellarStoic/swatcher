@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:17',
+  version: '0.1.0:18',
   releaseNotes: {
     en_US:
-      'Adds configurable smart address discovery for xpubs and ranged descriptors.',
+      'Warns when an incoming unconfirmed transaction explicitly signals Replace-by-Fee.',
     de_DE:
-      'Fügt eine konfigurierbare intelligente Adresserkennung für xpubs und Deskriptoren hinzu.',
+      'Warnt bei eingehenden unbestätigten Transaktionen, die ausdrücklich Replace-by-Fee signalisieren.',
   },
   migrations: {
     up: async () => {},

@@ -34,6 +34,8 @@ over a network can obtain its corresponding source from the
 - Show a gray, green, or red activity rail on each watch row based on its latest
   detected net movement.
 - Update mempool events when they receive a block confirmation.
+- Mark explicitly replaceable incoming mempool transactions with an amber
+  BIP125 warning until they confirm.
 - Show balance and newly detected activity in a local web UI.
 - Persist watches and events in `/data/state.json`.
 - Deliver retryable Telegram Bot API alerts and NIP-17 private Nostr messages.
