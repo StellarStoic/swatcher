@@ -447,6 +447,164 @@ func TestDuplicateWatchReturnsJSONConflict(t *testing.T) {
 	}
 }
 
+func TestBulkAddressImportCreatesOneDeduplicatedGroup(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+	segwit := "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+	scriptHash := "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"
+	form := url.Values{
+		"label":        {"Archive Addresses"},
+		"category":     {"Donations"},
+		"notes":        {"Imported public addresses."},
+		"bulk_sources": {legacy + "\n" + segwit + ", " + legacy + ";" + scriptHash},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("bulk add status %d: %s", response.Code, response.Body.String())
+	}
+	if len(a.state.Groups) != 1 || !a.state.Groups[0].Bulk || a.state.Groups[0].Count != 3 || a.state.Groups[0].ScriptType != "bulk" || len(a.state.Watches) != 3 {
+		t.Fatalf("unexpected bulk state: groups=%+v watches=%d", a.state.Groups, len(a.state.Watches))
+	}
+	response = httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, expected := range []string{"archive addresses", "3 addresses pasted in bulk", "bulk address list", "Mixed mainnet address types", "multiple types", "Paste in bulk"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("bulk render is missing %q: %s", expected, body)
+		}
+	}
+
+	second := url.Values{"label": {"duplicate list"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + segwit}}
+	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(second.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusConflict || len(a.state.Groups) != 1 || len(a.state.Watches) != 3 || !strings.Contains(response.Body.String(), "Nothing was added") {
+		t.Fatalf("overlapping bulk import was not atomic: status=%d body=%s groups=%d watches=%d", response.Code, response.Body.String(), len(a.state.Groups), len(a.state.Watches))
+	}
+}
+
+func TestBulkAddressImportRejectsInvalidEntryWithoutEchoingIt(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := "not-a-public-address"
+	form := url.Values{"label": {"archive"}, "category": {"old"}, "bulk_sources": {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\n" + invalid}}
+	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusBadRequest || len(a.state.Groups) != 0 || strings.Contains(response.Body.String(), invalid) || !strings.Contains(response.Body.String(), "Entry 2") {
+		t.Fatalf("invalid bulk response: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCombineGroupsMergesHistoryAndPreservesNotes(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{
+		{ID: "one", Label: "first", Category: "archive", Notes: "first context", Source: "address-one", ScriptType: "address", Count: 1, NotifyMode: "incoming", NotifyMinimum: 100, NotifyAfter: 1},
+		{ID: "two", Label: "second", Category: "archive", Notes: "second context", Source: "address-two", ScriptType: "address", Count: 1, NotifyMode: "incoming", NotifyMinimum: 100, NotifyAfter: 1},
+	}
+	a.state.Watches = []Watch{
+		{ID: "watch-one", GroupID: "one", Label: "first", Address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"},
+		{ID: "watch-two", GroupID: "two", Label: "second", Address: "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"},
+	}
+	a.state.Events = []Event{
+		{WatchID: "watch-one", GroupID: "one", TxID: "shared", Direction: "received", Received: 10, Net: 10, OPReturn: []string{"hello"}, ReceivedAddresses: []string{"address-one"}},
+		{WatchID: "watch-two", GroupID: "two", TxID: "shared", Direction: "sent", Sent: 3, Net: -3, Runestone: true, ReceivedAddresses: []string{"address-two"}},
+	}
+	form := url.Values{"group_ids": {"one", "two"}, "label": {"Combined Archive"}, "category": {"Long Term"}}
+	request := httptest.NewRequest(http.MethodPost, "/groups/combine", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	a.combineGroups(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("combine status %d: %s", response.Code, response.Body.String())
+	}
+	if len(a.state.Groups) != 1 || !a.state.Groups[0].Combined || a.state.Groups[0].Count != 2 || a.state.Groups[0].Label != "combined archive" || a.state.Groups[0].Category != "long term" || a.state.Groups[0].NotifyMode != "incoming" || a.state.Groups[0].NotifyMinimum != 100 || a.state.Groups[0].NotifyAfter != 1 {
+		t.Fatalf("unexpected combined group: %+v", a.state.Groups)
+	}
+	if !strings.Contains(a.state.Groups[0].Notes, "first context") || !strings.Contains(a.state.Groups[0].Notes, "second context") {
+		t.Fatalf("existing notes were not retained: %q", a.state.Groups[0].Notes)
+	}
+	for _, watch := range a.state.Watches {
+		if watch.GroupID != a.state.Groups[0].ID || watch.Label != "combined archive" {
+			t.Fatalf("watch was not reassigned: %+v", watch)
+		}
+	}
+	if len(a.state.Events) != 1 {
+		t.Fatalf("shared transaction was not consolidated: %+v", a.state.Events)
+	}
+	event := a.state.Events[0]
+	if event.GroupID != a.state.Groups[0].ID || event.Direction != "self-transfer" || event.Received != 10 || event.Sent != 3 || event.Net != 7 || !event.Runestone || !event.TelegramSent || !event.NostrSent || len(event.ReceivedAddresses) != 2 {
+		t.Fatalf("unexpected consolidated event: %+v", event)
+	}
+}
+
+func TestCombineGroupsRequiresConfirmationForMultiAddressWatch(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{
+		{ID: "wallet", Label: "wallet", Category: "cold", Source: "xpub", ScriptType: "native-segwit", Count: 2},
+		{ID: "address", Label: "address", Category: "cold", Source: "address", ScriptType: "address", Count: 1, NotifyMode: "off"},
+	}
+	a.state.Watches = []Watch{{ID: "one", GroupID: "wallet"}, {ID: "two", GroupID: "wallet"}, {ID: "three", GroupID: "address"}}
+	form := url.Values{"group_ids": {"wallet", "address"}, "label": {"combined"}, "category": {"cold"}}
+	request := httptest.NewRequest(http.MethodPost, "/groups/combine", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	a.combineGroups(response, request)
+	if response.Code != http.StatusConflict || len(a.state.Groups) != 2 || !strings.Contains(response.Body.String(), "Confirm") {
+		t.Fatalf("multi-address confirmation was not enforced: status=%d body=%s groups=%+v", response.Code, response.Body.String(), a.state.Groups)
+	}
+	form.Set("confirm_multi", "on")
+	request = httptest.NewRequest(http.MethodPost, "/groups/combine", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	a.combineGroups(response, request)
+	if response.Code != http.StatusCreated || len(a.state.Groups) != 1 || !a.state.Groups[0].Combined || a.state.Groups[0].NotifyMode != "off" {
+		t.Fatalf("confirmed consolidation failed or differing rules were not disabled: status=%d group=%+v", response.Code, a.state.Groups)
+	}
+}
+
+func TestIndexIncludesManualConsolidationWarnings(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{
+		{ID: "wallet", Label: "wallet", Category: "cold", Source: "xpub", ScriptType: "native-segwit", Count: 2},
+		{ID: "address", Label: "address", Category: "donations", Source: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", ScriptType: "address", Count: 1},
+	}
+	a.state.Watches = []Watch{{ID: "one", GroupID: "wallet"}, {ID: "two", GroupID: "wallet"}, {ID: "three", GroupID: "address"}}
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, expected := range []string{"Combine selected", "Select at least two watches", "Include group “", "Smart discovery for this group will stop.", "Existing history will not be resent", "confirm_multi"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("consolidation UI is missing %q: %s", expected, body)
+		}
+	}
+}
+
 func TestNormalizeWatchMetadata(t *testing.T) {
 	if got := normalizeWatchMetadata("  PAYCheck__ Wallet\tONE  "); got != "paycheck__ wallet one" {
 		t.Fatalf("unexpected normalized metadata %q", got)

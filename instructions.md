@@ -24,6 +24,7 @@ Open the **Web UI**, enter a label and one of the following, then select
 **Add watch**:
 
 - A Bitcoin mainnet address
+- A bulk list containing 2–10,000 unique Bitcoin mainnet addresses
 - An account-level `xpub`, `ypub`, or `zpub`
 - A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor
 
@@ -32,6 +33,28 @@ bare xpub does not identify its address type, so choose Legacy, Nested SegWit,
 Native SegWit, or Taproot when the selector appears. ypub and zpub formats
 identify their address type automatically; ordinary addresses do not require
 derivation settings.
+
+For a list of existing addresses, select **Paste in bulk** and paste entries
+separated by lines, spaces, commas, or semicolons. Repeated entries in the same
+paste are removed. All addresses appear as one watch with one combined balance,
+activity history, note, and notification rule. If any entry is invalid or
+already watched, nothing is added. Bulk mode accepts mainnet addresses only,
+not xpubs, other extended keys, descriptors, private keys, or seed phrases.
+The initial StartOS-local Electrs scan may take time for very large lists.
+
+To group watches that were already added, select the checkbox beside each watch
+and choose **Combine selected**. Select between 2 and 100 rows, containing no
+more than 10,000 addresses in total. A row may represent one address or an
+entire xpub, descriptor, bulk, or previously combined group. The confirmation
+dialog names every multi-address group and asks whether it should be included.
+
+Consolidation creates one fixed address collection and cannot automatically
+restore the old grouping. Including an xpub or descriptor retains its currently
+discovered addresses but stops future smart discovery for that source. Existing
+history is merged and is never resent as new notifications. Leave the new note
+empty to retain existing notes where possible. Matching notification rules are
+inherited; differing rules disable notifications until the combined watch is
+edited.
 
 The watch list shows a small linked mainnet type label such as P2PKH,
 P2SH-P2WPKH, P2WPKH, P2WSH, or P2TR. Select **Edit** to change the address type

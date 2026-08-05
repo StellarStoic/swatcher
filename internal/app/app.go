@@ -61,6 +61,8 @@ type WatchGroup struct {
 	IncludeChange  bool      `json:"includeChange,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	DiscoveryError string    `json:"discoveryError,omitempty"`
+	Bulk           bool      `json:"bulk,omitempty"`
+	Combined       bool      `json:"combined,omitempty"`
 	NotifyMode     string    `json:"notifyMode,omitempty"`
 	NotifyMinimum  uint64    `json:"notifyMinimum,omitempty"`
 	NotifyAfter    int       `json:"notifyAfter,omitempty"`
@@ -102,6 +104,8 @@ type state struct {
 }
 
 const defaultDiscoveryGap = 20
+const maxBulkAddresses = 10000
+const maxWatchFormBytes = 2 << 20
 const defaultTheme = "bitcoin-night"
 
 var themes = map[string]bool{
@@ -270,6 +274,7 @@ func (a *App) Run(listen string) error {
 	protected.HandleFunc("POST /watches", a.addWatch)
 	protected.HandleFunc("POST /groups/{id}/update", a.updateGroup)
 	protected.HandleFunc("POST /groups/{id}/delete", a.deleteGroup)
+	protected.HandleFunc("POST /groups/combine", a.combineGroups)
 	mux.Handle("/", a.requireAuth(protected))
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
@@ -346,7 +351,9 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%d pending)", data.Groups[i].Unconfirmed)
 		}
 		if a.state.PrivacyMode {
-			data.Groups[i].DisplaySource = maskIdentifier(data.Groups[i].Source)
+			if !data.Groups[i].Bulk && !data.Groups[i].Combined {
+				data.Groups[i].DisplaySource = maskIdentifier(data.Groups[i].Source)
+			}
 			data.Groups[i].DisplayLastTxID = maskIdentifier(data.Groups[i].LastTxID)
 			data.Groups[i].DisplayBalance = legacyMask(8)
 		}
@@ -445,7 +452,13 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxWatchFormBytes)
+	if err := r.ParseForm(); err != nil {
+		writeFormError(w, r, http.StatusBadRequest, "The watch form is too large or could not be read.")
+		return
+	}
 	source := strings.TrimSpace(r.FormValue("source"))
+	bulkSource := strings.TrimSpace(r.FormValue("bulk_sources"))
 	label := normalizeWatchMetadata(r.FormValue("label"))
 	category := normalizeWatchMetadata(r.FormValue("category"))
 	notes, noteErr := validateWatchNote(r.FormValue("notes"))
@@ -471,8 +484,23 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	newWatches := []Watch{}
 	scriptType := strings.TrimSpace(r.FormValue("script_type"))
 	count := 1
+	bulk := bulkSource != ""
 	includeChange := r.FormValue("include_change") == "on"
-	if scriptHash, err := bitcoin.ScriptHash(source); err == nil {
+	if bulk {
+		addresses, parseErr := parseBulkAddresses(bulkSource)
+		if parseErr != nil {
+			writeFormError(w, r, http.StatusBadRequest, parseErr.Error())
+			return
+		}
+		count = len(addresses)
+		source = "bulk-address-list"
+		scriptType = "bulk"
+		includeChange = false
+		for _, address := range addresses {
+			scriptHash, _ := bitcoin.ScriptHash(address)
+			newWatches = append(newWatches, Watch{ID: randomID(), GroupID: groupID, Label: label, Address: address, ScriptHash: scriptHash})
+		}
+	} else if scriptHash, err := bitcoin.ScriptHash(source); err == nil {
 		newWatches = append(newWatches, Watch{ID: randomID(), GroupID: groupID, Label: label, Address: source, ScriptHash: scriptHash})
 		scriptType = "address"
 	} else {
@@ -499,21 +527,23 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, group := range a.state.Groups {
-		if group.Source == source && group.ScriptType == scriptType {
+		if !bulk && !group.Bulk && group.Source == source && group.ScriptType == scriptType {
 			writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This wallet or address is already being watched as %q in %q.", group.Label, group.Category))
 			return
 		}
 	}
 	overlaps := map[string]int{}
+	owners := make(map[string]string, len(a.state.Watches))
 	for _, existing := range a.state.Watches {
-		for _, candidate := range newWatches {
-			if existing.Address == candidate.Address {
-				existingGroupID := existing.GroupID
-				if existingGroupID == "" {
-					existingGroupID = existing.ID
-				}
-				overlaps[existingGroupID]++
-			}
+		existingGroupID := existing.GroupID
+		if existingGroupID == "" {
+			existingGroupID = existing.ID
+		}
+		owners[existing.Address] = existingGroupID
+	}
+	for _, candidate := range newWatches {
+		if existingGroupID := owners[candidate.Address]; existingGroupID != "" {
+			overlaps[existingGroupID]++
 		}
 	}
 	if len(overlaps) > 0 {
@@ -533,11 +563,11 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This wallet overlaps with %q: %d of %d derived addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
+		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This watch overlaps with %q: %d of %d addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
 		return
 	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
-	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC()})
+	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC(), Bulk: bulk})
 	if err := a.saveLocked(); err != nil {
 		http.Error(w, "could not save watch", http.StatusInternalServerError)
 		return
@@ -549,6 +579,36 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func parseBulkAddresses(value string) ([]string, error) {
+	parts := strings.FieldsFunc(value, func(character rune) bool {
+		return unicode.IsSpace(character) || character == ',' || character == ';'
+	})
+	if len(parts) < 2 {
+		return nil, errors.New("Bulk import requires at least two Bitcoin mainnet addresses")
+	}
+	addresses := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for index, address := range parts {
+		if strings.HasPrefix(strings.ToLower(address), "bc1") {
+			address = strings.ToLower(address)
+		}
+		if _, err := bitcoin.ScriptHash(address); err != nil {
+			return nil, fmt.Errorf("Entry %d is not a valid Bitcoin mainnet address; nothing was added", index+1)
+		}
+		if !seen[address] {
+			seen[address] = true
+			addresses = append(addresses, address)
+			if len(addresses) > maxBulkAddresses {
+				return nil, fmt.Errorf("Bulk import supports at most %d unique addresses at once", maxBulkAddresses)
+			}
+		}
+	}
+	if len(addresses) < 2 {
+		return nil, errors.New("Bulk import requires at least two unique Bitcoin mainnet addresses")
+	}
+	return addresses, nil
 }
 
 func writeFormError(w http.ResponseWriter, r *http.Request, status int, message string) {
@@ -800,6 +860,204 @@ func (a *App) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := r.ParseForm(); err != nil {
+		writeFormError(w, r, http.StatusBadRequest, "The consolidation request could not be read.")
+		return
+	}
+	label := normalizeWatchMetadata(r.FormValue("label"))
+	category := normalizeWatchMetadata(r.FormValue("category"))
+	if label == "" || len(label) > 80 || !watchMetadataPattern.MatchString(label) || category == "" || len(category) > 60 || !watchMetadataPattern.MatchString(category) {
+		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only letters, numbers, spaces, and underscores.")
+		return
+	}
+	notes, err := validateWatchNote(r.FormValue("notes"))
+	if err != nil {
+		writeFormError(w, r, http.StatusBadRequest, err.Error()+". Never enter a private key or seed phrase.")
+		return
+	}
+	selectedIDs := make([]string, 0, len(r.Form["group_ids"]))
+	selected := make(map[string]bool, len(r.Form["group_ids"]))
+	for _, id := range r.Form["group_ids"] {
+		id = strings.TrimSpace(id)
+		if id != "" && !selected[id] {
+			selected[id] = true
+			selectedIDs = append(selectedIDs, id)
+		}
+	}
+	if len(selectedIDs) < 2 || len(selectedIDs) > 100 {
+		writeFormError(w, r, http.StatusBadRequest, "Select between 2 and 100 watches to combine.")
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	selectedGroups := make([]WatchGroup, 0, len(selectedIDs))
+	for _, id := range selectedIDs {
+		found := false
+		for _, group := range a.state.Groups {
+			if group.ID == id {
+				selectedGroups = append(selectedGroups, group)
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeFormError(w, r, http.StatusNotFound, "One of the selected watches no longer exists. Reload the page and try again.")
+			return
+		}
+	}
+	addressCounts := make(map[string]int, len(selected))
+	selectedWatchIDs := make(map[string]bool)
+	for _, watch := range a.state.Watches {
+		if selected[watch.GroupID] {
+			addressCounts[watch.GroupID]++
+			selectedWatchIDs[watch.ID] = true
+		}
+	}
+	totalAddresses := 0
+	hasMultiple := false
+	for _, id := range selectedIDs {
+		totalAddresses += addressCounts[id]
+		if addressCounts[id] > 1 {
+			hasMultiple = true
+		}
+	}
+	if totalAddresses < 2 {
+		writeFormError(w, r, http.StatusBadRequest, "The selected watches do not contain enough addresses to combine.")
+		return
+	}
+	if totalAddresses > maxBulkAddresses {
+		writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("A combined watch may contain at most %d addresses.", maxBulkAddresses))
+		return
+	}
+	if hasMultiple && r.FormValue("confirm_multi") != "on" {
+		writeFormError(w, r, http.StatusConflict, "Confirm that the selected multi-address groups should be included.")
+		return
+	}
+	if notes == "" {
+		notes = combinedNotes(selectedGroups)
+	}
+
+	newID := randomID()
+	for i := range a.state.Watches {
+		if !selected[a.state.Watches[i].GroupID] {
+			continue
+		}
+		a.state.Watches[i].GroupID = newID
+		a.state.Watches[i].Label = label
+		if a.state.Watches[i].Path != "" {
+			a.state.Watches[i].Label += " " + a.state.Watches[i].Path
+		}
+	}
+	notifyMode, notifyMinimum, notifyAfter := inheritedNotificationRule(selectedGroups)
+	keptGroups := a.state.Groups[:0]
+	for _, group := range a.state.Groups {
+		if !selected[group.ID] {
+			keptGroups = append(keptGroups, group)
+		}
+	}
+	a.state.Groups = append(keptGroups, WatchGroup{ID: newID, Label: label, Category: category, Notes: notes, Source: "combined-address-list", ScriptType: "collection", Count: totalAddresses, CreatedAt: time.Now().UTC(), Combined: true, NotifyMode: notifyMode, NotifyMinimum: notifyMinimum, NotifyAfter: notifyAfter})
+	a.state.Events = consolidateEvents(a.state.Events, selected, selectedWatchIDs, newID)
+	if err := a.saveLocked(); err != nil {
+		writeFormError(w, r, http.StatusInternalServerError, "The selected watches could not be combined.")
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": newID})
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func combinedNotes(groups []WatchGroup) string {
+	var lines []string
+	for _, group := range groups {
+		if strings.TrimSpace(group.Notes) == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("[%s / %s] %s", group.Category, group.Label, group.Notes))
+	}
+	runes := []rune(strings.Join(lines, "\n"))
+	if len(runes) > 500 {
+		runes = runes[:497]
+		runes = append(runes, '.', '.', '.')
+	}
+	return string(runes)
+}
+
+func inheritedNotificationRule(groups []WatchGroup) (string, uint64, int) {
+	if len(groups) == 0 {
+		return "off", 0, 0
+	}
+	mode := groups[0].NotifyMode
+	if mode == "" {
+		mode = "all"
+	}
+	minimum, after := groups[0].NotifyMinimum, groups[0].NotifyAfter
+	for _, group := range groups[1:] {
+		candidateMode := group.NotifyMode
+		if candidateMode == "" {
+			candidateMode = "all"
+		}
+		if candidateMode != mode || group.NotifyMinimum != minimum || group.NotifyAfter != after {
+			return "off", 0, 0
+		}
+	}
+	return mode, minimum, after
+}
+
+func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[string]bool, newGroupID string) []Event {
+	result := make([]Event, 0, len(events))
+	indexes := make(map[string]int)
+	for _, event := range events {
+		if !selectedGroups[event.GroupID] && !selectedWatchIDs[event.WatchID] {
+			result = append(result, event)
+			continue
+		}
+		event.GroupID = newGroupID
+		event.TelegramSent, event.NostrSent = true, true
+		if index, exists := indexes[event.TxID]; exists {
+			merged := &result[index]
+			merged.Received += event.Received
+			merged.Sent += event.Sent
+			merged.Net += event.Net
+			merged.Direction = direction(electrum.Effect{Received: merged.Received, Sent: merged.Sent})
+			merged.Replaceable = merged.Replaceable || event.Replaceable
+			merged.Runestone = merged.Runestone || event.Runestone
+			if event.Inscriptions > merged.Inscriptions {
+				merged.Inscriptions = event.Inscriptions
+			}
+			if event.Height > merged.Height {
+				merged.Height = event.Height
+			}
+			merged.OPReturn = appendUniqueStrings(merged.OPReturn, event.OPReturn...)
+			merged.ReceivedAddresses = appendUniqueStrings(merged.ReceivedAddresses, event.ReceivedAddresses...)
+			continue
+		}
+		indexes[event.TxID] = len(result)
+		result = append(result, event)
+	}
+	return result
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := make(map[string]bool, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if !seen[value] {
+			seen[value] = true
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
@@ -812,12 +1070,22 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) pollLoop() {
-	a.poll()
-	ticker := time.NewTicker(a.interval)
-	defer ticker.Stop()
-	for range ticker.C {
+	for {
 		a.poll()
+		time.Sleep(a.interval)
 	}
+}
+
+type pollResult struct {
+	watch        Watch
+	groupID      string
+	snapshot     electrum.Snapshot
+	effects      map[string]electrum.Effect
+	lastTxID     string
+	lastTxHeight int64
+	lastTxAt     time.Time
+	checkedAt    time.Time
+	err          error
 }
 
 func (a *App) poll() {
@@ -840,123 +1108,97 @@ func (a *App) poll() {
 			groupScriptAddresses[groupID][string(script)] = watch.Address
 		}
 	}
-	for _, watch := range watches {
-		groupID := watch.GroupID
-		if groupID == "" {
-			groupID = watch.ID
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		snapshot, err := a.client.Snapshot(ctx, watch.ScriptHash)
-		lastTxID, lastTxHeight, lastTxAt := watch.LastTxID, watch.LastTxHeight, watch.LastTxAt
-		if err == nil {
-			if latest, ok := latestHistory(snapshot.History); ok {
-				lastTxID, lastTxHeight = latest.TxHash, latest.Height
-				if latest.TxHash != watch.LastTxID || latest.Height != watch.LastTxHeight || watch.LastTxAt.IsZero() {
-					if latest.Height > 0 {
-						if blockTime, timeErr := a.client.BlockTime(ctx, latest.Height); timeErr == nil {
-							lastTxAt = blockTime
-						} else {
-							lastTxAt = time.Time{}
-							log.Printf("latest transaction time %s: %v", watch.Label, timeErr)
-						}
-					} else {
-						lastTxAt = time.Now().UTC()
-					}
-				}
-			} else {
-				lastTxID, lastTxHeight, lastTxAt = "", 0, time.Time{}
-			}
-		}
-		effects := make(map[string]electrum.Effect)
-		if err == nil && watch.Initialized {
-			known := make(map[string]bool, len(watch.KnownTx))
-			for _, txID := range watch.KnownTx {
-				known[txID] = true
-			}
-			for _, item := range snapshot.History {
-				if err != nil || known[item.TxHash] {
-					continue
-				}
-				effect, effectErr := a.client.TransactionEffect(ctx, item.TxHash, groupScripts[groupID])
-				if effectErr != nil {
-					err = effectErr
-					break
-				}
-				effects[item.TxHash] = effect
-			}
-		}
-		cancel()
-		a.mu.Lock()
-		for i := range a.state.Watches {
-			current := &a.state.Watches[i]
-			if current.ID != watch.ID {
-				continue
-			}
-			current.LastChecked = time.Now().UTC()
-			if err != nil {
-				current.LastError = err.Error()
-				log.Printf("poll %s: %v", watch.Label, err)
-				break
-			}
-			known := make(map[string]bool, len(current.KnownTx))
-			for _, txid := range current.KnownTx {
-				known[txid] = true
-			}
-			for _, item := range snapshot.History {
-				if current.Initialized && !known[item.TxHash] {
-					if !a.eventExistsLocked(groupID, item.TxHash) {
-						effect := effects[item.TxHash]
-						receivedAddresses := make([]string, 0, len(effect.ReceivedScripts))
-						for _, script := range effect.ReceivedScripts {
-							if address := groupScriptAddresses[groupID][script]; address != "" {
-								receivedAddresses = append(receivedAddresses, address)
-							}
-						}
-						a.state.Events = append(a.state.Events, Event{
-							WatchID:           current.ID,
-							GroupID:           groupID,
-							TxID:              item.TxHash,
-							Height:            item.Height,
-							Direction:         direction(effect),
-							Received:          effect.Received,
-							Sent:              effect.Sent,
-							Net:               int64(effect.Received) - int64(effect.Sent),
-							OPReturn:          effect.OPReturn,
-							Replaceable:       effect.Replaceable,
-							Runestone:         effect.Runestone,
-							Inscriptions:      effect.Inscriptions,
-							ReceivedAddresses: receivedAddresses,
-							SeenAt:            time.Now().UTC(),
-						})
-					}
-				}
-				if !known[item.TxHash] {
-					current.KnownTx = append(current.KnownTx, item.TxHash)
-					known[item.TxHash] = true
-				}
-			}
-			heights := make(map[string]int64, len(snapshot.History))
-			for _, item := range snapshot.History {
-				heights[item.TxHash] = item.Height
-			}
-			for i := range a.state.Events {
-				if a.state.Events[i].WatchID == current.ID || (a.state.Events[i].GroupID != "" && a.state.Events[i].GroupID == groupID) {
-					if height, ok := heights[a.state.Events[i].TxID]; ok {
-						a.state.Events[i].Height = height
-					}
-				}
-			}
-			current.Confirmed, current.Unconfirmed = snapshot.Balance.Confirmed, snapshot.Balance.Unconfirmed
-			current.LastTxID, current.LastTxHeight, current.LastTxAt = lastTxID, lastTxHeight, lastTxAt
-			current.Initialized, current.LastError = true, ""
-			break
-		}
-		if saveErr := a.saveLocked(); saveErr != nil {
-			log.Printf("save: %v", saveErr)
-		}
-		a.mu.Unlock()
+	workerCount := 8
+	if len(watches) < workerCount {
+		workerCount = len(watches)
 	}
+	jobs := make(chan Watch)
+	results := make(chan pollResult, len(watches))
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			for watch := range jobs {
+				results <- a.fetchWatch(watch, groupScripts)
+			}
+		}()
+	}
+	for _, watch := range watches {
+		jobs <- watch
+	}
+	close(jobs)
+	pollResults := make([]pollResult, 0, len(watches))
+	for range watches {
+		pollResults = append(pollResults, <-results)
+	}
+
 	a.mu.Lock()
+	watchIndexes := make(map[string]int, len(a.state.Watches))
+	for index := range a.state.Watches {
+		watchIndexes[a.state.Watches[index].ID] = index
+	}
+	for _, result := range pollResults {
+		i, exists := watchIndexes[result.watch.ID]
+		if !exists {
+			continue
+		}
+		current := &a.state.Watches[i]
+		current.LastChecked = result.checkedAt
+		if result.err != nil {
+			current.LastError = result.err.Error()
+			log.Printf("poll %s: %v", result.watch.Label, result.err)
+			continue
+		}
+		known := make(map[string]bool, len(current.KnownTx))
+		for _, txid := range current.KnownTx {
+			known[txid] = true
+		}
+		for _, item := range result.snapshot.History {
+			if current.Initialized && !known[item.TxHash] {
+				if !a.eventExistsLocked(result.groupID, item.TxHash) {
+					effect := result.effects[item.TxHash]
+					receivedAddresses := make([]string, 0, len(effect.ReceivedScripts))
+					for _, script := range effect.ReceivedScripts {
+						if address := groupScriptAddresses[result.groupID][script]; address != "" {
+							receivedAddresses = append(receivedAddresses, address)
+						}
+					}
+					a.state.Events = append(a.state.Events, Event{
+						WatchID:           current.ID,
+						GroupID:           result.groupID,
+						TxID:              item.TxHash,
+						Height:            item.Height,
+						Direction:         direction(effect),
+						Received:          effect.Received,
+						Sent:              effect.Sent,
+						Net:               int64(effect.Received) - int64(effect.Sent),
+						OPReturn:          effect.OPReturn,
+						Replaceable:       effect.Replaceable,
+						Runestone:         effect.Runestone,
+						Inscriptions:      effect.Inscriptions,
+						ReceivedAddresses: receivedAddresses,
+						SeenAt:            result.checkedAt,
+					})
+				}
+			}
+			if !known[item.TxHash] {
+				current.KnownTx = append(current.KnownTx, item.TxHash)
+				known[item.TxHash] = true
+			}
+		}
+		heights := make(map[string]int64, len(result.snapshot.History))
+		for _, item := range result.snapshot.History {
+			heights[item.TxHash] = item.Height
+		}
+		for i := range a.state.Events {
+			if a.state.Events[i].WatchID == current.ID || (a.state.Events[i].GroupID != "" && a.state.Events[i].GroupID == result.groupID) {
+				if height, ok := heights[a.state.Events[i].TxID]; ok {
+					a.state.Events[i].Height = height
+				}
+			}
+		}
+		current.Confirmed, current.Unconfirmed = result.snapshot.Balance.Confirmed, result.snapshot.Balance.Unconfirmed
+		current.LastTxID, current.LastTxHeight, current.LastTxAt = result.lastTxID, result.lastTxHeight, result.lastTxAt
+		current.Initialized, current.LastError = true, ""
+	}
 	if err := a.expandDiscoveryLocked(); err != nil {
 		log.Printf("smart discovery: %v", err)
 	}
@@ -965,6 +1207,56 @@ func (a *App) poll() {
 	}
 	a.mu.Unlock()
 	a.deliverPending()
+}
+
+func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte) pollResult {
+	groupID := watch.GroupID
+	if groupID == "" {
+		groupID = watch.ID
+	}
+	result := pollResult{watch: watch, groupID: groupID, effects: make(map[string]electrum.Effect), lastTxID: watch.LastTxID, lastTxHeight: watch.LastTxHeight, lastTxAt: watch.LastTxAt, checkedAt: time.Now().UTC()}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	result.snapshot, result.err = a.client.Snapshot(ctx, watch.ScriptHash)
+	if result.err != nil {
+		return result
+	}
+	if latest, ok := latestHistory(result.snapshot.History); ok {
+		result.lastTxID, result.lastTxHeight = latest.TxHash, latest.Height
+		if latest.TxHash != watch.LastTxID || latest.Height != watch.LastTxHeight || watch.LastTxAt.IsZero() {
+			if latest.Height > 0 {
+				if blockTime, err := a.client.BlockTime(ctx, latest.Height); err == nil {
+					result.lastTxAt = blockTime
+				} else {
+					result.lastTxAt = time.Time{}
+					log.Printf("latest transaction time %s: %v", watch.Label, err)
+				}
+			} else {
+				result.lastTxAt = result.checkedAt
+			}
+		}
+	} else {
+		result.lastTxID, result.lastTxHeight, result.lastTxAt = "", 0, time.Time{}
+	}
+	if !watch.Initialized {
+		return result
+	}
+	known := make(map[string]bool, len(watch.KnownTx))
+	for _, txID := range watch.KnownTx {
+		known[txID] = true
+	}
+	for _, item := range result.snapshot.History {
+		if known[item.TxHash] {
+			continue
+		}
+		effect, err := a.client.TransactionEffect(ctx, item.TxHash, groupScripts[groupID])
+		if err != nil {
+			result.err = err
+			return result
+		}
+		result.effects[item.TxHash] = effect
+	}
+	return result
 }
 
 func latestHistory(history []electrum.HistoryItem) (electrum.HistoryItem, bool) {
@@ -1036,7 +1328,7 @@ func (a *App) expandDiscoveryLocked() error {
 	}
 	for groupIndex := range a.state.Groups {
 		group := &a.state.Groups[groupIndex]
-		if group.ScriptType == "address" {
+		if group.ScriptType == "address" || group.Bulk || group.Combined {
 			continue
 		}
 		currentCount := group.Count
@@ -1394,11 +1686,20 @@ func (a *App) groupViewsLocked() []groupView {
 		if group.Category == "" {
 			group.Category = "uncategorized"
 		}
-		if group.ScriptType != "address" {
+		if group.Combined {
+			group.Source = fmt.Sprintf("%d addresses combined manually", group.Count)
+			group.ScriptType = "combined watch group"
+		} else if group.Bulk {
+			group.Source = fmt.Sprintf("%d addresses pasted in bulk", group.Count)
+			group.ScriptType = "bulk address list"
+		} else if group.ScriptType != "address" {
 			group.ScriptType += fmt.Sprintf(" · smart gap %d", discoveryGap(a.state.DiscoveryGap))
 		}
 		indexes[group.ID] = len(views)
 		typeName, typeCode, typeURL := addressTypeDetails(group.Source, scriptTypeKey)
+		if group.Bulk || group.Combined {
+			typeName, typeCode, typeURL = "", "", ""
+		}
 		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
 	}
 	for _, watch := range a.state.Watches {
@@ -1420,6 +1721,14 @@ func (a *App) groupViewsLocked() []groupView {
 			index = len(views) - 1
 		}
 		view := &views[index]
+		if view.Bulk || view.Combined {
+			typeName, typeCode, typeURL := addressTypeDetails(watch.Address, "address")
+			if view.AddressTypeCode == "" {
+				view.AddressTypeName, view.AddressTypeCode, view.AddressTypeURL = typeName, typeCode, typeURL
+			} else if view.AddressTypeCode != typeCode {
+				view.AddressTypeName, view.AddressTypeCode, view.AddressTypeURL = "Mixed mainnet address types", "multiple types", "https://github.com/bitcoin/bips"
+			}
+		}
 		view.Addresses++
 		view.Confirmed += watch.Confirmed
 		view.Unconfirmed += watch.Unconfirmed

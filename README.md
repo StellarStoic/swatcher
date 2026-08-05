@@ -17,6 +17,8 @@ over a network can obtain its corresponding source from the
 
 - Add and remove grouped mainnet Bitcoin addresses, xpubs, ypubs, zpubs, and
   supported output descriptors.
+- Paste as many as 10,000 unique mainnet addresses into one logical watch group
+  with one combined balance, activity history, note, and notification policy.
 - Discover wallet addresses automatically with a configurable 1–500 address
   gap, defaulting to 20 consecutive unused addresses.
 - Optionally monitor both the `/0` receive and `/1` change branches.
@@ -53,6 +55,46 @@ over a network can obtain its corresponding source from the
 No private keys are accepted or stored. Public extended keys reveal an entire
 wallet's transaction graph, so the state file and UI should still be treated as
 private information.
+
+## Bulk address groups
+
+Select **Paste in bulk** in the add-watch form to paste between 2 and 10,000
+unique Bitcoin mainnet addresses. Entries may be separated by lines, spaces,
+commas, or semicolons. Repeated addresses inside the same paste are removed.
+The complete import is atomic: if an entry is invalid or any address is already
+watched, s/watcher adds nothing and explains the problem without echoing the
+pasted value.
+
+A bulk import appears as one watch row and shares one name, group, note,
+combined balance, activity history, and notification policy. It may contain a
+mix of legacy, Script Hash, SegWit, and Taproot addresses. Bulk mode accepts
+addresses only, not extended keys or descriptors. The addresses persist in
+`/data/state.json` and are included in StartOS backups.
+
+To keep large groups practical, polling uses at most eight concurrent
+connections to StartOS-local Electrs and writes state once after each completed
+scan cycle. Initializing thousands of addresses can still take time and does
+not turn historical transactions into new alerts.
+
+## Combining existing watches
+
+Use the **Select** checkboxes beside existing watch rows and then choose
+**Combine selected** to turn 2–100 existing watches into one fixed collection,
+up to 10,000 total addresses. This is useful when addresses were originally
+added one at a time. The dialog requests a new name and group and explicitly
+names every selected multi-address group before consolidation.
+
+Combining an xpub or descriptor group retains every address discovered so far
+but stops smart discovery for that source because the result is a fixed address
+collection. The operation cannot reconstruct the original grouping
+automatically. Existing transactions touching multiple selected watches are
+merged, and all existing history is suppressed from notification delivery so
+the operation cannot generate old alerts.
+
+Leave the new note empty to retain existing notes where possible. If every
+selected watch has the same notification rule, that rule is inherited. If the
+rules differ, notifications are disabled on the new watch until reviewed with
+**Edit**.
 
 ## Smart wallet discovery
 
