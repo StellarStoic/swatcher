@@ -9,4 +9,9 @@ export const setDependencies = sdk.setupDependencies(async () => ({
     versionRange: '>=0.11.1:11',
     healthChecks: ['electrs', 'sync'],
   },
+  mempool: {
+    kind: 'running',
+    versionRange: '>=3.3.1:11',
+    healthChecks: ['webui'],
+  },
 }))

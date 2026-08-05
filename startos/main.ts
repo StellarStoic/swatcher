@@ -3,12 +3,13 @@
 
 import { i18n } from './i18n'
 import { sdk } from './sdk'
-import { electrumBridge, uiPort } from './utils'
+import { electrumBridge, localMempoolUrls, uiPort } from './utils'
 import { notificationConfig } from './fileModels/notifications.json'
 
 export const main = sdk.setupMain(async ({ effects }) => {
   console.info(i18n('Starting s-watcher'))
   const electrum = await electrumBridge(effects)
+  const mempoolUrls = await localMempoolUrls(effects)
   await notificationConfig.read().const(effects)
 
   return sdk.Daemons.of(effects).addDaemon('primary', {
@@ -34,6 +35,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
         SWATCHER_LISTEN: `:${uiPort}`,
         SWATCHER_DATA: '/data',
         ELECTRUM_ADDR: electrum ?? '127.0.0.1:50001',
+        SWATCHER_MEMPOOL_URLS: JSON.stringify(mempoolUrls),
       },
     },
     ready: {

@@ -42,11 +42,13 @@ already watched, nothing is added. Bulk mode accepts mainnet addresses only,
 not xpubs, other extended keys, descriptors, private keys, or seed phrases.
 The initial StartOS-local Electrs scan may take time for very large lists.
 
-To group watches that were already added, select the checkbox beside each watch
-and choose **Combine selected**. Select between 2 and 100 rows, containing no
-more than 10,000 addresses in total. A row may represent one address or an
-entire xpub, descriptor, bulk, or previously combined group. The confirmation
-dialog names every multi-address group and asks whether it should be included.
+To group watches that were already added, choose **Combine**. This reveals a
+checkbox beside each watch and changes the button to **Combine selected**. That
+button remains disabled until at least two rows are selected. Select between 2
+and 100 rows, containing no more than 10,000 addresses in total, and choose
+**Combine selected**. A row may represent one address or an entire xpub,
+descriptor, bulk, or previously combined group. The confirmation dialog names
+every multi-address group and asks whether it should be included.
 
 Consolidation creates one fixed address collection and cannot automatically
 restore the old grouping. Including an xpub or descriptor retains its currently
@@ -128,6 +130,13 @@ Each watch also shows the latest transaction found in its complete local
 Electrs history and how long ago it occurred. Confirmed transactions use their
 block-header time; unconfirmed transactions use the time s/watcher first sees
 them. Privacy Mode masks this transaction ID.
+
+If the optional Mempool dependency is installed and running, visible
+transaction IDs in the watch list and New activity table are links to your own
+Mempool service. When s/watcher is opened through Tor, it selects Mempool's
+onion interface; from LAN it selects a private local interface. It never sends
+the transaction ID to a public block explorer. Privacy Mode removes these links
+while transaction identifiers are masked.
 
 When newly detected activity contains a human-readable UTF-8 message in an
 OP_RETURN output, it appears beneath the transaction ID on a light gray label.

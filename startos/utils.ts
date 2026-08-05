@@ -16,3 +16,20 @@ export const electrumBridge = (effects: T.Effects) =>
       ssl: false,
     })
     .const()
+
+export async function localMempoolUrls(effects: T.Effects): Promise<string[]> {
+  const host = await sdk.host
+    .get(effects, { packageId: 'mempool', hostId: 'main' })
+    .const()
+  const address = host?.bindings[8080]?.interfaces.webui?.addressInfo
+  if (!address) return []
+
+  return address.nonLocal
+    .filter({
+      predicate: (hostname) =>
+        (hostname.metadata.kind === 'plugin' &&
+          hostname.metadata.packageId === 'tor') ||
+        (!hostname.public && hostname.metadata.kind !== 'plugin'),
+    })
+    .format('urlstring')
+}

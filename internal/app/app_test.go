@@ -4,7 +4,9 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +22,26 @@ import (
 	"github.com/s-watcher/s-watcher/internal/notify"
 	"github.com/s-watcher/s-watcher/internal/webauth"
 )
+
+func multipartWatchRequest(t *testing.T, values url.Values) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, entries := range values {
+		for _, value := range entries {
+			if err := writer.WriteField(name, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/watches", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Accept", "application/json")
+	return request
+}
 
 func TestDirection(t *testing.T) {
 	tests := []struct {
@@ -417,6 +439,51 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	}
 }
 
+func TestAddWatchAcceptsBrowserMultipartForSingleAndBulk(t *testing.T) {
+	tests := []struct {
+		name        string
+		form        url.Values
+		wantBulk    bool
+		wantWatches int
+	}{
+		{
+			name: "single address",
+			form: url.Values{
+				"label":    {"donations"},
+				"category": {"public"},
+				"source":   {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"},
+			},
+			wantWatches: 1,
+		},
+		{
+			name: "bulk addresses",
+			form: url.Values{
+				"label":        {"archive"},
+				"category":     {"old"},
+				"bulk_sources": {"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\nbc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"},
+			},
+			wantBulk:    true,
+			wantWatches: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			a.addWatch(response, multipartWatchRequest(t, test.form))
+			if response.Code != http.StatusCreated {
+				t.Fatalf("multipart add status %d: %s", response.Code, response.Body.String())
+			}
+			if len(a.state.Groups) != 1 || a.state.Groups[0].Bulk != test.wantBulk || len(a.state.Watches) != test.wantWatches {
+				t.Fatalf("unexpected multipart state: groups=%+v watches=%d", a.state.Groups, len(a.state.Watches))
+			}
+		})
+	}
+}
+
 func TestDuplicateWatchReturnsJSONConflict(t *testing.T) {
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {
@@ -598,10 +665,42 @@ func TestIndexIncludesManualConsolidationWarnings(t *testing.T) {
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	for _, expected := range []string{"Combine selected", "Select at least two watches", "Include group “", "Smart discovery for this group will stop.", "Existing history will not be resent", "confirm_multi"} {
+	for _, expected := range []string{"textContent='Combine'", "Combine selected", "choice.hidden=true", "Select at least two watches", "Include group “", "Smart discovery for this group will stop.", "Existing history will not be resent", "confirm_multi"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("consolidation UI is missing %q: %s", expected, body)
 		}
+	}
+}
+
+func TestLocalMempoolTransactionLinks(t *testing.T) {
+	t.Setenv("SWATCHER_MEMPOOL_URLS", `["http://mempool.local","http://privateexample.onion/","javascript:alert(1)","https://user@example.com"]`)
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{{ID: "wallet", Label: "wallet", Category: "cold", Source: "address", ScriptType: "address", Count: 1}}
+	a.state.Watches = []Watch{{ID: "one", GroupID: "wallet", LastTxID: "abc123"}}
+	a.state.Events = []Event{{WatchID: "one", GroupID: "wallet", TxID: "abc123", Direction: "received", Received: 42, SeenAt: time.Now()}}
+
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, expected := range []string{`data-url="http://mempool.local"`, `data-url="http://privateexample.onion"`, `class="tx-link" data-txid="abc123"`, `'/tx/'+encodeURIComponent`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("local Mempool link UI is missing %q: %s", expected, body)
+		}
+	}
+	for _, rejected := range []string{"javascript:alert", "user@example.com"} {
+		if strings.Contains(body, rejected) {
+			t.Fatalf("unsafe Mempool URL was rendered: %q", rejected)
+		}
+	}
+
+	a.state.PrivacyMode = true
+	response = httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if strings.Contains(response.Body.String(), `data-txid="abc123"`) {
+		t.Fatal("privacy mode must not expose a transaction ID through a link")
 	}
 }
 

@@ -182,6 +182,7 @@ type pageData struct {
 	Theme            string
 	SortMode         string
 	GroupSuggestions []string
+	MempoolURLs      []string
 	CSPNonce         string
 }
 
@@ -242,6 +243,7 @@ type App struct {
 	interval         time.Duration
 	tmpl             *template.Template
 	notifier         notify.Sender
+	mempoolURLs      []string
 	authPath         string
 	authMu           sync.Mutex
 	failedLogins     int
@@ -252,7 +254,7 @@ func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) 
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}}
+	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}, mempoolURLs: parseMempoolURLs(os.Getenv("SWATCHER_MEMPOOL_URLS"))}
 	a.tmpl = template.Must(template.New("index").Funcs(template.FuncMap{"watchLabel": a.watchLabel}).Parse(indexHTML))
 	if err := a.load(); err != nil {
 		return nil, err
@@ -287,7 +289,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
 		sortMode = "activity"
 	}
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, CSPNonce: cspNonce(r)}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, MempoolURLs: a.mempoolURLs, CSPNonce: cspNonce(r)}
 	suggestions := map[string]bool{}
 	for _, group := range a.state.Groups {
 		if watchMetadataPattern.MatchString(group.Category) {
@@ -453,7 +455,13 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxWatchFormBytes)
-	if err := r.ParseForm(); err != nil {
+	var parseErr error
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data;") {
+		parseErr = r.ParseMultipartForm(maxWatchFormBytes)
+	} else {
+		parseErr = r.ParseForm()
+	}
+	if parseErr != nil {
 		writeFormError(w, r, http.StatusBadRequest, "The watch form is too large or could not be read.")
 		return
 	}
@@ -1954,6 +1962,27 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
+func parseMempoolURLs(raw string) []string {
+	var candidates []string
+	if err := json.Unmarshal([]byte(raw), &candidates); err != nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")
+		parsed, err := url.Parse(candidate)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			continue
+		}
+		if !seen[candidate] {
+			seen[candidate] = true
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
 func maskIdentifier(value string) string {
 	runes := []rune(value)
 	if len(runes) <= 8 {
@@ -2034,7 +2063,11 @@ func securityHeaders(next http.Handler) http.Handler {
 					return
 				}
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			maxBody := int64(1 << 20)
+			if r.URL.Path == "/watches" {
+				maxBody = maxWatchFormBytes
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), cspNonceKey{}, nonce)))
 	})

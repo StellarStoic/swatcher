@@ -40,6 +40,9 @@ over a network can obtain its corresponding source from the
 - Mark explicitly replaceable incoming mempool transactions with an amber
   BIP125 warning until they confirm.
 - Show balance and newly detected activity in a local web UI.
+- Link visible transaction IDs to the optional StartOS-local Mempool service,
+  matching Tor sessions to its onion interface and LAN sessions to its local
+  interface.
 - Persist watches and events in `/data/state.json`.
 - Deliver retryable Telegram Bot API alerts and NIP-17 private Nostr messages.
 - Persist per-channel delivery state so restarts do not duplicate alerts.
@@ -78,11 +81,13 @@ not turn historical transactions into new alerts.
 
 ## Combining existing watches
 
-Use the **Select** checkboxes beside existing watch rows and then choose
-**Combine selected** to turn 2–100 existing watches into one fixed collection,
-up to 10,000 total addresses. This is useful when addresses were originally
-added one at a time. The dialog requests a new name and group and explicitly
-names every selected multi-address group before consolidation.
+Choose **Combine** to enter selection mode. The previously hidden checkboxes
+then appear and the button becomes **Combine selected**, remaining disabled
+until at least two rows are selected. Choose 2–100 existing watches and then
+**Combine selected** to turn them into one fixed collection, up to 10,000 total
+addresses. This is useful when addresses were originally added one at a time.
+The dialog requests a new name and group and explicitly names every selected
+multi-address group before consolidation.
 
 Combining an xpub or descriptor group retains every address discovered so far
 but stops smart discovery for that source because the result is a fixed address
@@ -214,16 +219,26 @@ block header fetched through StartOS-local Electrs; an unconfirmed transaction
 uses the time s/watcher first observes it. Privacy Mode masks the displayed
 transaction ID along with the other identifiers.
 
+When the optional Mempool dependency is installed and running, visible
+transaction IDs in both the watch status and activity table open that
+transaction in the Mempool service on the same StartOS server. s/watcher uses
+Mempool's onion interface when opened through Tor and its private LAN interface
+otherwise; it never falls back to a public explorer. Transaction links are
+disabled while Privacy Mode masks identifiers.
+
 ## Architecture
 
 ```text
 browser -> s/watcher:8080 -> Electrs:50001 -> Bitcoin
-                  |
-                  +-> /data/state.json
+     |            |
+     |            +-> /data/state.json
+     +-> optional local Mempool /tx/<txid>
 ```
 
 The package resolves Electrs through the StartOS 0.4 LXC bridge using package
 id `electrs`, host id `electrum`, and internal port `50001`.
+Mempool is an optional StartOS dependency used only to discover its private Web
+UI addresses; transaction data still comes exclusively from local Electrs.
 
 ## Development
 

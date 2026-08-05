@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:25',
+  version: '0.1.0:27',
   releaseNotes: {
     en_US:
-      'Adds bulk address imports and manual consolidation of existing watches into fixed groups, with explicit multi-address warnings.',
+      'Fixes single-address and bulk watch submissions, improves consolidation selection, and adds optional local Mempool transaction links.',
     de_DE:
-      'Fügt Adress-Massenimporte und die manuelle Zusammenführung bestehender Überwachungen in feste Gruppen mit ausdrücklichen Warnungen für Gruppen mit mehreren Adressen hinzu.',
+      'Behebt das Hinzufügen einzelner Adressen und Adresslisten, verbessert die Auswahl zum Zusammenführen und ergänzt optionale lokale Mempool-Transaktionslinks.',
   },
   migrations: {
     up: async () => {},

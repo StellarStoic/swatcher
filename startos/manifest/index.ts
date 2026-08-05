@@ -34,5 +34,14 @@ export const manifest = setupManifest({
         icon: 'https://raw.githubusercontent.com/Start9Labs/electrs-startos/refs/heads/master/icon.svg',
       },
     },
+    mempool: {
+      description:
+        'Optional local transaction explorer used for private transaction links.',
+      optional: true,
+      metadata: {
+        title: 'Mempool',
+        icon: 'https://raw.githubusercontent.com/Start9Labs/mempool-startos/refs/heads/master/icon.svg',
+      },
+    },
   },
 })
