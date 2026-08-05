@@ -136,6 +136,14 @@ and overlapping wallet imports are rejected without changing the watch list and
 explained in an in-interface modal. Hardened derivation below an xpub is
 rejected because it is not mathematically possible.
 
+Each watch shows a compact, linked mainnet address-type description: P2PKH,
+P2SH, P2SH-P2WPKH, P2WPKH, P2WSH, or P2TR as appropriate. The **Edit** form can
+change the derivation type of a bare xpub. Because that selection produces a
+different set of addresses, s/watcher replaces the old derived coverage and
+establishes a fresh historical baseline; it does not emit old transactions as
+new notifications. Address types encoded by ypubs, zpubs, descriptors, and
+individual addresses cannot be changed in the editor.
+
 Watch names and groups accept letters, numbers, spaces, and underscores. Input
 is normalized to lowercase when saved, and repeated whitespace is collapsed.
 Wallet-name and group tags receive automatic light colors. Color assignment is
@@ -157,6 +165,12 @@ Each watch row has a slim activity rail: gray means no detected movement or a
 net-neutral transaction, green means the latest transaction added sats, and
 red means it drained sats. The rail reflects the latest detected event for the
 whole watch group.
+
+The watch status also shows its most recent historical transaction and a
+relative time such as **2 weeks ago**. Confirmed times come from the matching
+block header fetched through StartOS-local Electrs; an unconfirmed transaction
+uses the time s/watcher first observes it. Privacy Mode masks the displayed
+transaction ID along with the other identifiers.
 
 ## Architecture
 

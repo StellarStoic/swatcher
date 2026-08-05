@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:23',
+  version: '0.1.0:24',
   releaseNotes: {
     en_US:
-      'Adds private per-wallet notes and five persistent Web Interface themes with color previews.',
+      'Adds editable bare-xpub address types, linked type descriptions, and each watch’s latest historical transaction with relative time.',
     de_DE:
-      'Fügt private Wallet-Notizen und fünf dauerhafte Oberflächen-Themes mit Farbvorschau hinzu.',
+      'Fügt bearbeitbare Adresstypen für reine xpubs, verlinkte Typbeschreibungen und die letzte historische Transaktion jeder Wallet mit relativer Zeit hinzu.',
   },
   migrations: {
     up: async () => {},

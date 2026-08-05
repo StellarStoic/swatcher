@@ -6,6 +6,8 @@ package electrum
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +85,23 @@ func (c *Client) TipHeight(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return header.Height, nil
+}
+
+func (c *Client) BlockTime(ctx context.Context, height int64) (time.Time, error) {
+	var raw string
+	if err := c.call(ctx, "blockchain.block.header", []any{height}, &raw); err != nil {
+		return time.Time{}, err
+	}
+	return blockTimeFromHeader(raw)
+}
+
+func blockTimeFromHeader(raw string) (time.Time, error) {
+	header, err := hex.DecodeString(raw)
+	if err != nil || len(header) != 80 {
+		return time.Time{}, errors.New("electrs returned an invalid block header")
+	}
+	timestamp := binary.LittleEndian.Uint32(header[68:72])
+	return time.Unix(int64(timestamp), 0).UTC(), nil
 }
 
 // TransactionEffect calculates exactly how many satoshis entered and left a

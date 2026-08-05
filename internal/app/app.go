@@ -33,18 +33,21 @@ import (
 )
 
 type Watch struct {
-	ID          string    `json:"id"`
-	GroupID     string    `json:"groupId,omitempty"`
-	Label       string    `json:"label"`
-	Address     string    `json:"address"`
-	Path        string    `json:"path,omitempty"`
-	ScriptHash  string    `json:"scriptHash"`
-	Confirmed   int64     `json:"confirmed"`
-	Unconfirmed int64     `json:"unconfirmed"`
-	KnownTx     []string  `json:"knownTx"`
-	Initialized bool      `json:"initialized"`
-	LastChecked time.Time `json:"lastChecked,omitempty"`
-	LastError   string    `json:"lastError,omitempty"`
+	ID           string    `json:"id"`
+	GroupID      string    `json:"groupId,omitempty"`
+	Label        string    `json:"label"`
+	Address      string    `json:"address"`
+	Path         string    `json:"path,omitempty"`
+	ScriptHash   string    `json:"scriptHash"`
+	Confirmed    int64     `json:"confirmed"`
+	Unconfirmed  int64     `json:"unconfirmed"`
+	KnownTx      []string  `json:"knownTx"`
+	Initialized  bool      `json:"initialized"`
+	LastChecked  time.Time `json:"lastChecked,omitempty"`
+	LastError    string    `json:"lastError,omitempty"`
+	LastTxID     string    `json:"lastTxId,omitempty"`
+	LastTxHeight int64     `json:"lastTxHeight,omitempty"`
+	LastTxAt     time.Time `json:"lastTxAt,omitempty"`
 }
 
 type WatchGroup struct {
@@ -136,16 +139,25 @@ func privacyIndicatorSettings(value state) (reuse, small, combined bool, thresho
 
 type groupView struct {
 	WatchGroup
-	Confirmed      int64
-	Unconfirmed    int64
-	Addresses      int
-	Ready          int
-	LastChecked    time.Time
-	LastError      string
-	DisplaySource  string
-	DisplayBalance string
-	LastActivity   time.Time
-	ActivitySignal string
+	Confirmed         int64
+	Unconfirmed       int64
+	Addresses         int
+	Ready             int
+	LastChecked       time.Time
+	LastError         string
+	DisplaySource     string
+	DisplayBalance    string
+	LastActivity      time.Time
+	ActivitySignal    string
+	ScriptTypeKey     string
+	CanEditScriptType bool
+	AddressTypeName   string
+	AddressTypeCode   string
+	AddressTypeURL    string
+	LastTxID          string
+	DisplayLastTxID   string
+	LastTxAt          time.Time
+	LastTxAgo         string
 }
 
 type eventView struct {
@@ -327,12 +339,15 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			data.Groups[i].ActivitySignal = "idle"
 		}
 		data.Groups[i].DisplaySource = data.Groups[i].Source
+		data.Groups[i].DisplayLastTxID = data.Groups[i].LastTxID
+		data.Groups[i].LastTxAgo = relativeTime(data.Groups[i].LastTxAt, time.Now())
 		data.Groups[i].DisplayBalance = fmt.Sprintf("%d sat", data.Groups[i].Confirmed)
 		if data.Groups[i].Unconfirmed != 0 {
 			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%d pending)", data.Groups[i].Unconfirmed)
 		}
 		if a.state.PrivacyMode {
 			data.Groups[i].DisplaySource = maskIdentifier(data.Groups[i].Source)
+			data.Groups[i].DisplayLastTxID = maskIdentifier(data.Groups[i].LastTxID)
 			data.Groups[i].DisplayBalance = legacyMask(8)
 		}
 	}
@@ -561,6 +576,15 @@ func scriptTypeForAddress(address string) string {
 	}
 }
 
+func isBareXpub(source string) bool {
+	source = strings.TrimSpace(source)
+	return strings.HasPrefix(source, "xpub") && !strings.Contains(source, "(")
+}
+
+func validScriptType(value string) bool {
+	return value == "legacy" || value == "nested-segwit" || value == "native-segwit" || value == "taproot"
+}
+
 func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	label := normalizeWatchMetadata(r.FormValue("label"))
@@ -611,23 +635,90 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	found := false
+	groupIndex := -1
 	for i := range a.state.Groups {
 		if a.state.Groups[i].ID == id {
-			a.state.Groups[i].Label = label
-			a.state.Groups[i].Category = category
-			if noteProvided {
-				a.state.Groups[i].Notes = notes
-			}
-			a.state.Groups[i].NotifyMode = notifyMode
-			a.state.Groups[i].NotifyMinimum = notifyMinimum
-			a.state.Groups[i].NotifyAfter = notifyAfter
-			found = true
+			groupIndex = i
+			break
 		}
 	}
-	if !found {
+	if groupIndex < 0 {
 		writeFormError(w, r, http.StatusNotFound, "The watch could not be found.")
 		return
+	}
+	group := &a.state.Groups[groupIndex]
+	requestedType := strings.TrimSpace(r.FormValue("script_type"))
+	typeChanged := false
+	var replacement []Watch
+	if isBareXpub(group.Source) && requestedType != "" && requestedType != group.ScriptType {
+		if !validScriptType(requestedType) {
+			writeFormError(w, r, http.StatusBadRequest, "Choose a valid xpub address type.")
+			return
+		}
+		count := group.Count
+		if count < 1 {
+			count = discoveryGap(a.state.DiscoveryGap)
+		}
+		derived, err := bitcoin.DeriveAddresses(group.Source, requestedType, count, group.IncludeChange)
+		if err != nil {
+			writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
+			return
+		}
+		owners := make(map[string]string, len(a.state.Watches))
+		for _, watch := range a.state.Watches {
+			if watch.GroupID != id {
+				owners[watch.Address] = watch.GroupID
+			}
+		}
+		for _, child := range derived {
+			if owner, exists := owners[child.Address]; exists {
+				ownerName := "another watched wallet"
+				for _, candidate := range a.state.Groups {
+					if candidate.ID == owner {
+						ownerName = candidate.Category + " / " + candidate.Label
+						break
+					}
+				}
+				writeFormError(w, r, http.StatusConflict, fmt.Sprintf("The selected address type overlaps %q. Nothing was changed.", ownerName))
+				return
+			}
+			scriptHash, err := bitcoin.ScriptHash(child.Address)
+			if err != nil {
+				writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
+				return
+			}
+			replacement = append(replacement, Watch{ID: randomID(), GroupID: id, Label: label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
+		}
+		typeChanged = true
+	}
+	group.Label = label
+	group.Category = category
+	if noteProvided {
+		group.Notes = notes
+	}
+	group.NotifyMode = notifyMode
+	group.NotifyMinimum = notifyMinimum
+	group.NotifyAfter = notifyAfter
+	if typeChanged {
+		group.ScriptType = requestedType
+		if group.Count < 1 {
+			group.Count = discoveryGap(a.state.DiscoveryGap)
+		}
+		group.DiscoveryError = ""
+		keptWatches := a.state.Watches[:0]
+		for _, watch := range a.state.Watches {
+			if watch.GroupID != id {
+				keptWatches = append(keptWatches, watch)
+			}
+		}
+		a.state.Watches = append(keptWatches, replacement...)
+		keptEvents := a.state.Events[:0]
+		for _, event := range a.state.Events {
+			if event.GroupID != id {
+				keptEvents = append(keptEvents, event)
+			}
+		}
+		a.state.Events = keptEvents
 	}
 	for i := range a.state.Watches {
 		if a.state.Watches[i].GroupID == id {
@@ -638,7 +729,7 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := a.saveLocked(); err != nil {
-		writeFormError(w, r, http.StatusInternalServerError, "The name and group could not be saved.")
+		writeFormError(w, r, http.StatusInternalServerError, "The watch settings could not be saved.")
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -756,6 +847,26 @@ func (a *App) poll() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		snapshot, err := a.client.Snapshot(ctx, watch.ScriptHash)
+		lastTxID, lastTxHeight, lastTxAt := watch.LastTxID, watch.LastTxHeight, watch.LastTxAt
+		if err == nil {
+			if latest, ok := latestHistory(snapshot.History); ok {
+				lastTxID, lastTxHeight = latest.TxHash, latest.Height
+				if latest.TxHash != watch.LastTxID || latest.Height != watch.LastTxHeight || watch.LastTxAt.IsZero() {
+					if latest.Height > 0 {
+						if blockTime, timeErr := a.client.BlockTime(ctx, latest.Height); timeErr == nil {
+							lastTxAt = blockTime
+						} else {
+							lastTxAt = time.Time{}
+							log.Printf("latest transaction time %s: %v", watch.Label, timeErr)
+						}
+					} else {
+						lastTxAt = time.Now().UTC()
+					}
+				}
+			} else {
+				lastTxID, lastTxHeight, lastTxAt = "", 0, time.Time{}
+			}
+		}
 		effects := make(map[string]electrum.Effect)
 		if err == nil && watch.Initialized {
 			known := make(map[string]bool, len(watch.KnownTx))
@@ -836,6 +947,7 @@ func (a *App) poll() {
 				}
 			}
 			current.Confirmed, current.Unconfirmed = snapshot.Balance.Confirmed, snapshot.Balance.Unconfirmed
+			current.LastTxID, current.LastTxHeight, current.LastTxAt = lastTxID, lastTxHeight, lastTxAt
 			current.Initialized, current.LastError = true, ""
 			break
 		}
@@ -853,6 +965,67 @@ func (a *App) poll() {
 	}
 	a.mu.Unlock()
 	a.deliverPending()
+}
+
+func latestHistory(history []electrum.HistoryItem) (electrum.HistoryItem, bool) {
+	var latest electrum.HistoryItem
+	found := false
+	for _, item := range history {
+		if !found || (item.Height <= 0 && latest.Height > 0) || (item.Height <= 0 && latest.Height <= 0) || (item.Height > latest.Height && latest.Height > 0) {
+			latest, found = item, true
+		}
+	}
+	return latest, found
+}
+
+func relativeTime(value, now time.Time) string {
+	if value.IsZero() {
+		return "time unavailable"
+	}
+	d := now.Sub(value)
+	if d < 0 || d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		minutes := int(d / time.Minute)
+		if minutes == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", minutes)
+	}
+	if d < 24*time.Hour {
+		hours := int(d / time.Hour)
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	}
+	if d < 14*24*time.Hour {
+		days := int(d / (24 * time.Hour))
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	}
+	if d < 60*24*time.Hour {
+		weeks := int(d / (7 * 24 * time.Hour))
+		if weeks == 1 {
+			return "1 week ago"
+		}
+		return fmt.Sprintf("%d weeks ago", weeks)
+	}
+	if d < 730*24*time.Hour {
+		months := int(d / (30 * 24 * time.Hour))
+		if months == 1 {
+			return "1 month ago"
+		}
+		return fmt.Sprintf("%d months ago", months)
+	}
+	years := int(d / (365 * 24 * time.Hour))
+	if years == 1 {
+		return "1 year ago"
+	}
+	return fmt.Sprintf("%d years ago", years)
 }
 
 func (a *App) expandDiscoveryLocked() error {
@@ -1217,6 +1390,7 @@ func (a *App) groupViewsLocked() []groupView {
 	views := make([]groupView, 0, len(a.state.Groups))
 	indexes := make(map[string]int, len(a.state.Groups))
 	for _, group := range a.state.Groups {
+		scriptTypeKey := group.ScriptType
 		if group.Category == "" {
 			group.Category = "uncategorized"
 		}
@@ -1224,7 +1398,8 @@ func (a *App) groupViewsLocked() []groupView {
 			group.ScriptType += fmt.Sprintf(" · smart gap %d", discoveryGap(a.state.DiscoveryGap))
 		}
 		indexes[group.ID] = len(views)
-		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError})
+		typeName, typeCode, typeURL := addressTypeDetails(group.Source, scriptTypeKey)
+		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
 	}
 	for _, watch := range a.state.Watches {
 		groupID := watch.GroupID
@@ -1254,11 +1429,43 @@ func (a *App) groupViewsLocked() []groupView {
 		if watch.LastChecked.After(view.LastChecked) {
 			view.LastChecked = watch.LastChecked
 		}
+		if watch.LastTxAt.After(view.LastTxAt) || (view.LastTxID == "" && watch.LastTxID != "") {
+			view.LastTxID, view.LastTxAt = watch.LastTxID, watch.LastTxAt
+		}
 		if view.LastError == "" && watch.LastError != "" {
 			view.LastError = watch.LastError
 		}
 	}
 	return views
+}
+
+func addressTypeDetails(source, scriptType string) (string, string, string) {
+	if scriptType == "address" {
+		switch {
+		case strings.HasPrefix(source, "1"):
+			return "Legacy mainnet · Pay-to-Public-Key-Hash", "P2PKH", "https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki"
+		case strings.HasPrefix(source, "3"):
+			return "Script Hash mainnet · Pay-to-Script-Hash", "P2SH", "https://github.com/bitcoin/bips/blob/master/bip-0016.mediawiki"
+		case strings.HasPrefix(source, "bc1p"):
+			return "Taproot mainnet · Pay-to-Taproot", "P2TR", "https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki"
+		case strings.HasPrefix(source, "bc1q") && len(source) > 50:
+			return "SegWit mainnet · Pay-to-Witness-Script-Hash", "P2WSH", "https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki"
+		case strings.HasPrefix(source, "bc1q"):
+			return "SegWit mainnet · Pay-to-Witness-Public-Key-Hash", "P2WPKH", "https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki"
+		}
+	}
+	switch scriptType {
+	case "legacy":
+		return "Legacy mainnet · Pay-to-Public-Key-Hash", "P2PKH", "https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki"
+	case "nested-segwit":
+		return "Nested SegWit mainnet · Pay-to-Script-Hash wrapped SegWit", "P2SH-P2WPKH", "https://github.com/bitcoin/bips/blob/master/bip-0049.mediawiki"
+	case "native-segwit":
+		return "Native SegWit mainnet · Pay-to-Witness-Public-Key-Hash", "P2WPKH", "https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki"
+	case "taproot":
+		return "Taproot mainnet · Pay-to-Taproot", "P2TR", "https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki"
+	default:
+		return "Bitcoin mainnet", "Address", "https://github.com/bitcoin/bips"
+	}
 }
 
 func (a *App) watchLabel(id string) string {

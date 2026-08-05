@@ -498,6 +498,80 @@ func TestUpdateGroupPreservesDisabledPrivateNote(t *testing.T) {
 	}
 }
 
+func TestUpdateBareXpubAddressTypeRederivesFreshBaseline(t *testing.T) {
+	master, err := hdkeychain.NewMaster([]byte("s-watcher edit type test"), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := master.Neuter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := url.Values{"label": {"wallet"}, "category": {"savings"}, "source": {public.String()}, "script_type": {"native-segwit"}, "include_change": {"on"}}
+	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(add.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("add status %d: %s", response.Code, response.Body.String())
+	}
+	oldID := a.state.Watches[0].ID
+	a.state.Watches[0].Initialized = true
+	a.state.Watches[0].KnownTx = []string{"historical"}
+	a.state.Events = []Event{{WatchID: oldID, GroupID: a.state.Groups[0].ID, TxID: "historical"}}
+
+	edit := url.Values{"label": {"wallet"}, "category": {"savings"}, "script_type": {"legacy"}, "notify_mode": {"all"}, "notify_minimum": {"0"}, "notify_after": {"0"}}
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", a.state.Groups[0].ID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("update status %d: %s", response.Code, response.Body.String())
+	}
+	if a.state.Groups[0].ScriptType != "legacy" || len(a.state.Watches) != defaultDiscoveryGap*2 || len(a.state.Events) != 0 {
+		t.Fatalf("unexpected rederived state: group=%+v watches=%d events=%d", a.state.Groups[0], len(a.state.Watches), len(a.state.Events))
+	}
+	for _, watch := range a.state.Watches {
+		if !strings.HasPrefix(watch.Address, "1") || watch.Initialized || len(watch.KnownTx) != 0 || watch.ID == oldID {
+			t.Fatalf("watch was not freshly rederived as legacy: %+v", watch)
+		}
+	}
+}
+
+func TestLatestHistoricalTransactionRendersWithAddressType(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txID := strings.Repeat("a", 64)
+	a.state.Groups = []WatchGroup{{ID: "group", Label: "donation", Category: "public", Source: "1BoatSLRHtKNngkdXEeobR76b53LETtpyT", ScriptType: "address", Count: 1}}
+	a.state.Watches = []Watch{{ID: "watch", GroupID: "group", Label: "donation", Address: "1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Initialized: true, LastTxID: txID, LastTxHeight: 800000, LastTxAt: time.Now().Add(-14 * 24 * time.Hour)}}
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, expected := range []string{"Legacy mainnet", "P2PKH", "bip-0044.mediawiki", "Last transaction · 2 weeks ago", txID} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("render is missing %q: %s", expected, body)
+		}
+	}
+}
+
+func TestLatestHistoryPrefersMempoolThenHighestBlock(t *testing.T) {
+	history := []electrum.HistoryItem{{TxHash: "old", Height: 10}, {TxHash: "new", Height: 12}}
+	if latest, ok := latestHistory(history); !ok || latest.TxHash != "new" {
+		t.Fatalf("unexpected confirmed latest: %+v, %v", latest, ok)
+	}
+	history = append(history, electrum.HistoryItem{TxHash: "pending", Height: 0})
+	if latest, ok := latestHistory(history); !ok || latest.TxHash != "pending" {
+		t.Fatalf("unexpected mempool latest: %+v, %v", latest, ok)
+	}
+}
+
 func TestSetThemePersistsValidatedTheme(t *testing.T) {
 	dataDir := t.TempDir()
 	if err := SetTheme(dataDir, "not-a-theme"); err == nil {

@@ -33,6 +33,13 @@ Native SegWit, or Taproot when the selector appears. ypub and zpub formats
 identify their address type automatically; ordinary addresses do not require
 derivation settings.
 
+The watch list shows a small linked mainnet type label such as P2PKH,
+P2SH-P2WPKH, P2WPKH, P2WSH, or P2TR. Select **Edit** to change the address type
+for a bare xpub. This replaces its derived addresses and creates a fresh
+historical baseline, so older transactions are not sent as new notifications.
+The type is intentionally not editable for ypubs, zpubs, descriptors, or
+individual addresses because those inputs already determine it.
+
 s/watcher discovers wallet addresses automatically. Open **Actions → General →
 Smart Wallet Discovery** to set the number of consecutive unused addresses it
 keeps beyond the highest used index. The default is 20 and the allowed range is
@@ -93,6 +100,11 @@ observed after this feature is installed.
 The colored rail on the left of each watch summarizes its latest activity:
 gray means no movement or no net change, green means sats were added, and red
 means sats were drained.
+
+Each watch also shows the latest transaction found in its complete local
+Electrs history and how long ago it occurred. Confirmed transactions use their
+block-header time; unconfirmed transactions use the time s/watcher first sees
+them. Privacy Mode masks this transaction ID.
 
 When newly detected activity contains a human-readable UTF-8 message in an
 OP_RETURN output, it appears beneath the transaction ID on a light gray label.
