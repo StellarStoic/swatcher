@@ -88,6 +88,11 @@ When newly detected activity contains a human-readable UTF-8 message in an
 OP_RETURN output, it appears beneath the transaction ID on a light gray label.
 Binary OP_RETURN protocol data is not displayed.
 
+New activity also shows a badge when its raw transaction contains a Runes
+runestone marker or one or more Ordinals inscription envelopes. Detection uses
+only your StartOS-local Electrs transaction data. s/watcher does not decode,
+render, fetch, or link the protocol content.
+
 An incoming unconfirmed transaction that explicitly signals Replace-by-Fee
 shows an amber **Replaceable — do not treat as final until confirmed.** badge.
 The warning disappears after Electrs reports a block confirmation.

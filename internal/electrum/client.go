@@ -46,6 +46,8 @@ type Effect struct {
 	Sent            uint64
 	OPReturn        []string
 	Replaceable     bool
+	Runestone       bool
+	Inscriptions    int
 	ReceivedScripts []string
 }
 
@@ -91,7 +93,11 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 	if err != nil {
 		return Effect{}, err
 	}
-	effect := Effect{Replaceable: tx.SignalsRBF()}
+	effect := Effect{
+		Replaceable:  tx.SignalsRBF(),
+		Runestone:    tx.HasRunestone(),
+		Inscriptions: tx.InscriptionEnvelopeCount(),
+	}
 	watched := make(map[string]bool, len(scripts))
 	for _, script := range scripts {
 		watched[string(script)] = true

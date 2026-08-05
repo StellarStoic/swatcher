@@ -58,6 +58,41 @@ func TestParseSegwitTransaction(t *testing.T) {
 	if len(tx.Outputs) != 1 || tx.Outputs[0].Value != 1_000 {
 		t.Fatalf("unexpected transaction: %+v", tx)
 	}
+	if len(tx.Witnesses) != 1 || len(tx.Witnesses[0]) != 1 || hex.EncodeToString(tx.Witnesses[0][0]) != "aa" {
+		t.Fatalf("unexpected witnesses: %+v", tx.Witnesses)
+	}
+}
+
+func TestProtocolMarkerDetection(t *testing.T) {
+	tx := Transaction{
+		Outputs: []TxOutput{{Script: []byte{0x6a, 0x5d, 0x01, 0x00}}},
+		Witnesses: [][][]byte{{
+			{0x00, 0x63, 0x03, 'o', 'r', 'd', 0x01, 0x01, 0x68},
+			{0x51, 0x00, 0x63, 0x4c, 0x03, 'o', 'r', 'd', 0x68},
+		}},
+	}
+	if !tx.HasRunestone() {
+		t.Fatal("runestone marker was not detected")
+	}
+	if got := tx.InscriptionEnvelopeCount(); got != 2 {
+		t.Fatalf("InscriptionEnvelopeCount() = %d; want 2", got)
+	}
+}
+
+func TestProtocolMarkerDetectionRejectsEmbeddedAndMalformedMarkers(t *testing.T) {
+	tx := Transaction{
+		Outputs: []TxOutput{{Script: []byte{0x6a, 0x01, 0x5d}}},
+		Witnesses: [][][]byte{{
+			{0x06, 0x00, 0x63, 0x03, 'o', 'r', 'd'},
+			{0x00, 0x63, 0x04, 'o', 'r', 'd'},
+		}},
+	}
+	if tx.HasRunestone() {
+		t.Fatal("non-marker OP_RETURN was detected as a runestone")
+	}
+	if got := tx.InscriptionEnvelopeCount(); got != 0 {
+		t.Fatalf("InscriptionEnvelopeCount() = %d; want 0", got)
+	}
 }
 
 func TestParseRejectsTruncatedTransaction(t *testing.T) {

@@ -14,8 +14,9 @@ import (
 )
 
 type Transaction struct {
-	Inputs  []TxInput
-	Outputs []TxOutput
+	Inputs    []TxInput
+	Outputs   []TxOutput
+	Witnesses [][][]byte
 }
 
 type TxInput struct {
@@ -38,6 +39,103 @@ func (tx Transaction) SignalsRBF() bool {
 		}
 	}
 	return false
+}
+
+// HasRunestone reports whether an output contains the Runes protocol marker.
+// It intentionally does not decode or interpret the runestone payload.
+func (tx Transaction) HasRunestone() bool {
+	for _, output := range tx.Outputs {
+		if len(output.Script) >= 2 && output.Script[0] == 0x6a && output.Script[1] == 0x5d {
+			return true
+		}
+	}
+	return false
+}
+
+// InscriptionEnvelopeCount counts Ordinals protocol envelopes in witness
+// scripts. Content and metadata are deliberately neither decoded nor stored.
+func (tx Transaction) InscriptionEnvelopeCount() int {
+	count := 0
+	for _, witness := range tx.Witnesses {
+		for _, item := range witness {
+			count += inscriptionEnvelopes(item)
+		}
+	}
+	return count
+}
+
+func inscriptionEnvelopes(script []byte) int {
+	count := 0
+	state := 0
+	for position := 0; position < len(script); {
+		opcode, pushed, data, next, ok := scriptOperation(script, position)
+		if !ok {
+			return count
+		}
+		position = next
+		switch state {
+		case 0:
+			if opcode == 0x00 {
+				state = 1
+			}
+		case 1:
+			if opcode == 0x63 {
+				state = 2
+			} else if opcode != 0x00 {
+				state = 0
+			}
+		case 2:
+			if pushed && string(data) == "ord" {
+				count++
+			}
+			if opcode == 0x00 {
+				state = 1
+			} else {
+				state = 0
+			}
+		}
+	}
+	return count
+}
+
+func scriptOperation(script []byte, position int) (byte, bool, []byte, int, bool) {
+	if position >= len(script) {
+		return 0, false, nil, position, false
+	}
+	opcode := script[position]
+	position++
+	var size uint64
+	switch {
+	case opcode == 0x00:
+		return opcode, true, nil, position, true
+	case opcode <= 75:
+		size = uint64(opcode)
+	case opcode == 0x4c:
+		if position >= len(script) {
+			return 0, false, nil, position, false
+		}
+		size = uint64(script[position])
+		position++
+	case opcode == 0x4d:
+		if position+2 > len(script) {
+			return 0, false, nil, position, false
+		}
+		size = uint64(binary.LittleEndian.Uint16(script[position : position+2]))
+		position += 2
+	case opcode == 0x4e:
+		if position+4 > len(script) {
+			return 0, false, nil, position, false
+		}
+		size = uint64(binary.LittleEndian.Uint32(script[position : position+4]))
+		position += 4
+	default:
+		return opcode, false, nil, position, true
+	}
+	if size > uint64(len(script)-position) {
+		return 0, false, nil, position, false
+	}
+	end := position + int(size)
+	return opcode, true, script[position:end], end, true
 }
 
 // OPReturnText returns a human-readable UTF-8 payload from a standard
@@ -93,9 +191,8 @@ func OPReturnText(script []byte) (string, bool) {
 	return message, true
 }
 
-// ParseTransaction decodes the input references and outputs needed to compute
-// the effect of a transaction on a watched script. Signatures and witnesses
-// are intentionally skipped.
+// ParseTransaction decodes the input references, outputs, and witness stack
+// items needed to compute wallet effects and detect protocol markers.
 func ParseTransaction(rawHex string) (Transaction, error) {
 	raw, err := hex.DecodeString(rawHex)
 	if err != nil {
@@ -164,19 +261,23 @@ func ParseTransaction(rawHex string) (Transaction, error) {
 		tx.Outputs = append(tx.Outputs, TxOutput{Value: binary.LittleEndian.Uint64(valueBytes), Script: append([]byte(nil), script...)})
 	}
 	if segwit {
+		tx.Witnesses = make([][][]byte, inputCount)
 		for i := uint64(0); i < inputCount; i++ {
 			items, err := r.varInt()
 			if err != nil {
 				return Transaction{}, fmt.Errorf("read witness %d item count: %w", i, err)
 			}
+			tx.Witnesses[i] = make([][]byte, 0, items)
 			for j := uint64(0); j < items; j++ {
 				length, err := r.varInt()
 				if err != nil {
 					return Transaction{}, fmt.Errorf("read witness item length: %w", err)
 				}
-				if _, err := r.takeSize(length); err != nil {
+				item, err := r.takeSize(length)
+				if err != nil {
 					return Transaction{}, fmt.Errorf("read witness item: %w", err)
 				}
+				tx.Witnesses[i] = append(tx.Witnesses[i], append([]byte(nil), item...))
 			}
 		}
 	}

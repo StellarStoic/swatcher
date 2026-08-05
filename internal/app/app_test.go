@@ -158,13 +158,13 @@ func TestTemplatesEscapeStoredValues(t *testing.T) {
 	payload := `<script>alert("xss")</script>`
 	a.state.Groups = []WatchGroup{{ID: "group", Label: payload, Category: payload, Source: payload, ScriptType: "address"}}
 	a.state.Events = []Event{
-		{GroupID: "group", TxID: strings.Repeat("a", 64), Direction: "received", OPReturn: []string{payload}, Replaceable: true, SeenAt: time.Now()},
+		{GroupID: "group", TxID: strings.Repeat("a", 64), Direction: "received", OPReturn: []string{payload}, Replaceable: true, Runestone: true, Inscriptions: 2, SeenAt: time.Now()},
 		{GroupID: "group", TxID: strings.Repeat("b", 64), Height: 1, Direction: "received", Replaceable: true, SeenAt: time.Now()},
 	}
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 {
+	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 {
 		t.Fatalf("stored values were not safely HTML-escaped: %s", body)
 	}
 }

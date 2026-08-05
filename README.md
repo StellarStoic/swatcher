@@ -97,6 +97,14 @@ They do not trigger notifications. Address-reuse counts begin with activity
 recorded by a version that supports the indicator; existing historical events
 without received-address metadata are not guessed.
 
+## Runes and Ordinals detection
+
+For newly detected activity, s/watcher marks transactions containing the Runes
+runestone output marker or Ordinals inscription envelopes in transaction
+witnesses. Detection uses raw transaction data fetched from the StartOS-local
+Electrs service. s/watcher does not decode, render, fetch, or link protocol
+content.
+
 A plain `xpub` does not encode an address type, so the Web UI asks for one only
 when a bare xpub is entered. `ypub` and `zpub` imports infer nested and native
 SegWit respectively, while descriptors are authoritative. Duplicate addresses

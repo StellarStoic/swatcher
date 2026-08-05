@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:21',
+  version: '0.1.0:22',
   releaseNotes: {
     en_US:
-      'Adds configurable informational badges for address reuse, small deposits, and combined watched wallets.',
+      'Detects runestones and Ordinals inscription envelopes locally without decoding or linking their content.',
     de_DE:
-      'Fügt konfigurierbare Hinweise für Adresswiederverwendung, kleine Eingänge und kombinierte beobachtete Wallets hinzu.',
+      'Erkennt Runestones und Ordinals-Inskriptionshüllen lokal, ohne deren Inhalt zu dekodieren oder zu verlinken.',
   },
   migrations: {
     up: async () => {},
