@@ -1,0 +1,5 @@
+data/
+javascript/
+node_modules/
+*.s9pk
+/s-watcher
