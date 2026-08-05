@@ -63,6 +63,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "set-theme" {
+		if err := app.SetTheme(env("SWATCHER_DATA", "/data"), os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 6 && os.Args[1] == "set-privacy-indicators" {
 		threshold, err := strconv.ParseUint(os.Args[2], 10, 64)
 		if err != nil || threshold == 0 {

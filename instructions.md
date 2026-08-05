@@ -53,6 +53,16 @@ This prevents duplicated activity notifications.
 
 Names and groups may contain letters, numbers, spaces, and underscores. They
 are converted to lowercase when saved, and repeated whitespace is collapsed.
+An optional wallet note can contain up to 500 characters of plain-text context
+and may use punctuation and multiple lines. Add it with a new watch or select
+**Edit** to change it. Never enter a Bitcoin private key or seed phrase;
+s/watcher rejects common secret-key and seed-phrase shapes. Privacy Mode masks
+notes, and StartOS backups include them with the rest of `/data/state.json`.
+
+Open **Actions → General → Theme** to choose Bitcoin Night, Cypherpunk
+Neon, Arctic Node, Forest Ledger, or Paper Ledger. Colored swatches beside each
+name preview its palette. The saved theme applies to the login screen and Web
+Interface after the service restarts and persists through StartOS backups.
 Name and group tags are assigned readable light colors automatically. Matching
 text uses the same color regardless of capitalization.
 Previously saved valid groups appear as suggestions in the group field. In the

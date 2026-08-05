@@ -15,6 +15,9 @@ export const stateConfig = FileHelper.json(
       smallDepositIndicators: z.boolean().catch(true),
       combinedWalletIndicators: z.boolean().catch(true),
       smallDepositThreshold: z.number().int().positive().catch(1000),
+      theme: z
+        .enum(['bitcoin-night', 'cypherpunk', 'arctic', 'forest', 'paper'])
+        .catch('bitcoin-night'),
     })
     .passthrough(),
 )

@@ -30,7 +30,8 @@ over a network can obtain its corresponding source from the
 - Consolidate activity across every derived address in a watch, classify new
   transactions as received, sent, or self-transfer, and show exact amounts.
 - Keep watch names and groups as read-only summaries until explicitly edited,
-  suggest existing groups, and sort watches by six useful criteria.
+  attach private notes, suggest existing groups, and sort watches by six useful
+  criteria.
 - Show a gray, green, or red activity rail on each watch row based on its latest
   detected net movement.
 - Update mempool events when they receive a block confirmation.
@@ -46,6 +47,8 @@ over a network can obtain its corresponding source from the
   deterministic DiceBear avatar and configurable sender name.
 - Require an Argon2id-protected password for the Web Interface and provide a
   server-rendered privacy mode for balances and identifiers.
+- Choose from five persistent Web Interface themes through a StartOS action,
+  with color swatches beside every theme name.
 
 No private keys are accepted or stored. Public extended keys reveal an entire
 wallet's transaction graph, so the state file and UI should still be treated as
@@ -76,6 +79,27 @@ only, or disabled; a minimum sat amount; and delivery in the mempool or after
 1, 3, or 6 confirmations. The default remains every transaction in the
 mempool. Waiting and delivery state persists in `/data/state.json`, preventing
 duplicate alerts after a restart.
+
+## Wallet notes
+
+Each wallet or address can carry an optional 500-character note for context
+that does not fit its short name or group. Add the note with a new watch or
+select **Edit** to change it. Notes support punctuation and multiple lines,
+remain escaped as plain text in the Web Interface, persist in
+`/data/state.json`, and are included in StartOS backups. Privacy Mode masks
+notes along with balances and wallet identifiers.
+
+Never enter a Bitcoin private key or seed phrase. s/watcher rejects common
+extended-private-key, WIF, and seed-phrase shapes as an additional safeguard.
+
+## Themes
+
+Open **Actions → General → Theme** to select Bitcoin Night, Cypherpunk
+Neon, Arctic Node, Forest Ledger, or Paper Ledger. Colored swatches beside the
+option names preview each palette. The choice is stored in `/data/state.json`,
+applies to both the login screen and dashboard after the automatic restart,
+and is included in StartOS backups. Existing installations default to Bitcoin
+Night.
 
 ## Notification schedule
 
@@ -238,4 +262,4 @@ rendered HTML. Notification messages are not altered by privacy mode.
 The StartOS backup includes the complete `main` volume: `state.json`,
 `notifications.json`, and `auth.json`. Restores therefore retain watches,
 notification credentials and sender keys, the web-password hash, privacy mode,
-and session-signing state.
+selected theme, wallet notes, and session-signing state.

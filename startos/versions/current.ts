@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:22',
+  version: '0.1.0:23',
   releaseNotes: {
     en_US:
-      'Detects runestones and Ordinals inscription envelopes locally without decoding or linking their content.',
+      'Adds private per-wallet notes and five persistent Web Interface themes with color previews.',
     de_DE:
-      'Erkennt Runestones und Ordinals-Inskriptionshüllen lokal, ohne deren Inhalt zu dekodieren oder zu verlinken.',
+      'Fügt private Wallet-Notizen und fünf dauerhafte Oberflächen-Themes mit Farbvorschau hinzu.',
   },
   migrations: {
     up: async () => {},

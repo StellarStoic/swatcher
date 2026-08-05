@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
@@ -49,6 +51,7 @@ type WatchGroup struct {
 	ID             string    `json:"id"`
 	Label          string    `json:"label"`
 	Category       string    `json:"category,omitempty"`
+	Notes          string    `json:"notes,omitempty"`
 	Source         string    `json:"source"`
 	ScriptType     string    `json:"scriptType,omitempty"`
 	Count          int       `json:"count"`
@@ -92,9 +95,26 @@ type state struct {
 	SmallDepositIndicators      bool         `json:"smallDepositIndicators,omitempty"`
 	CombinedWalletIndicators    bool         `json:"combinedWalletIndicators,omitempty"`
 	SmallDepositThreshold       uint64       `json:"smallDepositThreshold,omitempty"`
+	Theme                       string       `json:"theme,omitempty"`
 }
 
 const defaultDiscoveryGap = 20
+const defaultTheme = "bitcoin-night"
+
+var themes = map[string]bool{
+	"bitcoin-night": true,
+	"cypherpunk":    true,
+	"arctic":        true,
+	"forest":        true,
+	"paper":         true,
+}
+
+func selectedTheme(value string) string {
+	if themes[value] {
+		return value
+	}
+	return defaultTheme
+}
 
 func discoveryGap(value int) int {
 	if value < 1 || value > 500 {
@@ -143,15 +163,53 @@ type pageData struct {
 	Events           []eventView
 	Nostr            *nostrIdentityView
 	PrivacyMode      bool
+	Theme            string
 	SortMode         string
 	GroupSuggestions []string
 	CSPNonce         string
 }
 
 var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9_]+(?: [a-z0-9_]+)*$`)
+var watchWIFPattern = regexp.MustCompile(`(?i)(?:^|[^1-9A-HJ-NP-Za-km-z])(?:5[1-9A-HJ-NP-Za-km-z]{50}|[KL][1-9A-HJ-NP-Za-km-z]{51})(?:$|[^1-9A-HJ-NP-Za-km-z])`)
+var seedWordPattern = regexp.MustCompile(`^[A-Za-z]+$`)
 
 func normalizeWatchMetadata(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func validateWatchNote(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if !utf8.ValidString(value) || utf8.RuneCountInString(value) > 500 {
+		return "", errors.New("the note must contain at most 500 valid characters")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) && character != '\n' && character != '\r' && character != '\t' {
+			return "", errors.New("the note contains an unsupported control character")
+		}
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"xprv", "yprv", "zprv", "tprv", "uprv", "vprv"} {
+		if strings.Contains(lower, prefix) {
+			return "", errors.New("private keys and seed phrases cannot be stored in wallet notes")
+		}
+	}
+	if watchWIFPattern.MatchString(value) {
+		return "", errors.New("private keys and seed phrases cannot be stored in wallet notes")
+	}
+	words := strings.Fields(value)
+	if len(words) == 12 || len(words) == 15 || len(words) == 18 || len(words) == 21 || len(words) == 24 {
+		allWords := true
+		for _, word := range words {
+			if !seedWordPattern.MatchString(word) {
+				allWords = false
+				break
+			}
+		}
+		if allWords {
+			return "", errors.New("private keys and seed phrases cannot be stored in wallet notes")
+		}
+	}
+	return value, nil
 }
 
 type nostrIdentityView struct {
@@ -212,7 +270,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
 		sortMode = "activity"
 	}
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, SortMode: sortMode, CSPNonce: cspNonce(r)}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, CSPNonce: cspNonce(r)}
 	suggestions := map[string]bool{}
 	for _, group := range a.state.Groups {
 		if watchMetadataPattern.MatchString(group.Category) {
@@ -312,11 +370,15 @@ func (a *App) requireAuth(next http.Handler) http.Handler {
 
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	_, err := webauth.Load(a.authPath)
+	a.mu.RLock()
+	theme := selectedTheme(a.state.Theme)
+	a.mu.RUnlock()
 	data := struct {
 		Configured bool
 		Error      bool
 		CSPNonce   string
-	}{Configured: err == nil, Error: r.URL.Query().Get("error") == "1", CSPNonce: cspNonce(r)}
+		Theme      string
+	}{Configured: err == nil, Error: r.URL.Query().Get("error") == "1", CSPNonce: cspNonce(r), Theme: theme}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if renderErr := template.Must(template.New("login").Parse(loginHTML)).Execute(w, data); renderErr != nil {
 		log.Printf("render login: %v", renderErr)
@@ -371,6 +433,11 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	source := strings.TrimSpace(r.FormValue("source"))
 	label := normalizeWatchMetadata(r.FormValue("label"))
 	category := normalizeWatchMetadata(r.FormValue("category"))
+	notes, noteErr := validateWatchNote(r.FormValue("notes"))
+	if noteErr != nil {
+		writeFormError(w, r, http.StatusBadRequest, noteErr.Error()+". Never enter a private key or seed phrase.")
+		return
+	}
 	if label == "" {
 		label = "bitcoinaddress"
 	}
@@ -455,7 +522,7 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
-	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC()})
+	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC()})
 	if err := a.saveLocked(); err != nil {
 		http.Error(w, "could not save watch", http.StatusInternalServerError)
 		return
@@ -498,6 +565,16 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	label := normalizeWatchMetadata(r.FormValue("label"))
 	category := normalizeWatchMetadata(r.FormValue("category"))
+	notes := ""
+	noteValues, noteProvided := r.Form["notes"]
+	if noteProvided {
+		var noteErr error
+		notes, noteErr = validateWatchNote(noteValues[0])
+		if noteErr != nil {
+			writeFormError(w, r, http.StatusBadRequest, noteErr.Error()+". Never enter a private key or seed phrase.")
+			return
+		}
+	}
 	if label == "" || len(label) > 80 || !watchMetadataPattern.MatchString(label) || category == "" || len(category) > 60 || !watchMetadataPattern.MatchString(category) {
 		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only letters, numbers, spaces, and underscores.")
 		return
@@ -539,6 +616,9 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		if a.state.Groups[i].ID == id {
 			a.state.Groups[i].Label = label
 			a.state.Groups[i].Category = category
+			if noteProvided {
+				a.state.Groups[i].Notes = notes
+			}
 			a.state.Groups[i].NotifyMode = notifyMode
 			a.state.Groups[i].NotifyMinimum = notifyMinimum
 			a.state.Groups[i].NotifyAfter = notifyAfter
@@ -1307,6 +1387,35 @@ func SetPrivacyIndicators(dataDir string, threshold uint64, reuse, small, combin
 	current.SmallDepositIndicators = small
 	current.CombinedWalletIndicators = combined
 	current.SmallDepositThreshold = threshold
+	b, err = json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode state: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0600); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	return nil
+}
+
+func SetTheme(dataDir, theme string) error {
+	if !themes[theme] {
+		return errors.New("unknown theme")
+	}
+	path := filepath.Join(dataDir, "state.json")
+	var current state
+	b, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(b, &current); err != nil {
+			return fmt.Errorf("decode state: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read state: %w", err)
+	}
+	current.Theme = theme
 	b, err = json.MarshalIndent(current, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode state: %w", err)

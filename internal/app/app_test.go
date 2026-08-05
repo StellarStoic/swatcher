@@ -127,14 +127,14 @@ func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
 	address := "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
 	a.state = state{
 		PrivacyMode: true,
-		Groups:      []WatchGroup{{ID: "group", Label: "Savings", Category: "Cold", Source: address, ScriptType: "address", Count: 1}},
+		Groups:      []WatchGroup{{ID: "group", Label: "Savings", Category: "Cold", Notes: "hardware wallet stored upstairs", Source: address, ScriptType: "address", Count: 1}},
 		Watches:     []Watch{{ID: "watch", GroupID: "group", Label: "Savings", Address: address, Confirmed: 123456, Initialized: true}},
 		Events:      []Event{{WatchID: "watch", GroupID: "group", TxID: strings.Repeat("a", 64), Direction: "received", Received: 5000, SeenAt: time.Now()}},
 	}
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	for _, secret := range []string{address, "123456 sat", "5000 sat", strings.Repeat("a", 64)} {
+	for _, secret := range []string{address, "123456 sat", "5000 sat", strings.Repeat("a", 64), "hardware wallet stored upstairs"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("privacy response exposed %q", secret)
 		}
@@ -156,7 +156,7 @@ func TestTemplatesEscapeStoredValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := `<script>alert("xss")</script>`
-	a.state.Groups = []WatchGroup{{ID: "group", Label: payload, Category: payload, Source: payload, ScriptType: "address"}}
+	a.state.Groups = []WatchGroup{{ID: "group", Label: payload, Category: payload, Notes: payload, Source: payload, ScriptType: "address"}}
 	a.state.Events = []Event{
 		{GroupID: "group", TxID: strings.Repeat("a", 64), Direction: "received", OPReturn: []string{payload}, Replaceable: true, Runestone: true, Inscriptions: 2, SeenAt: time.Now()},
 		{GroupID: "group", TxID: strings.Repeat("b", 64), Height: 1, Direction: "received", Replaceable: true, SeenAt: time.Now()},
@@ -374,6 +374,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	form := url.Values{
 		"label":          {"Test Wallet_1"},
 		"category":       {"Cold Storage"},
+		"notes":          {"Long-term savings; verify annually."},
 		"source":         {public.String()},
 		"script_type":    {"native-segwit"},
 		"include_change": {"on"},
@@ -385,7 +386,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("add status %d: %s", response.Code, response.Body.String())
 	}
-	if len(a.state.Groups) != 1 || a.state.Groups[0].Count != defaultDiscoveryGap || len(a.state.Watches) != defaultDiscoveryGap*2 {
+	if len(a.state.Groups) != 1 || a.state.Groups[0].Count != defaultDiscoveryGap || a.state.Groups[0].Notes != "Long-term savings; verify annually." || len(a.state.Watches) != defaultDiscoveryGap*2 {
 		t.Fatalf("unexpected imported state: %d groups, %d watches", len(a.state.Groups), len(a.state.Watches))
 	}
 	for i := range a.state.Watches {
@@ -411,7 +412,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
@@ -455,5 +456,65 @@ func TestNormalizeWatchMetadata(t *testing.T) {
 	}
 	if watchMetadataPattern.MatchString("paycheck-wallet") {
 		t.Fatal("unsupported punctuation should remain invalid")
+	}
+}
+
+func TestValidateWatchNoteRejectsSecrets(t *testing.T) {
+	valid, err := validateWatchNote("Donation address used for the 2025 conference.\nRetire after the event.")
+	if err != nil || !strings.Contains(valid, "Retire") {
+		t.Fatalf("valid note rejected: %q, %v", valid, err)
+	}
+	for _, secret := range []string{
+		"xprv9s21ZrQH143K3secretmaterial",
+		"K" + strings.Repeat("1", 51),
+		"abandon ability able about above absent absorb abstract absurd abuse access accident",
+	} {
+		if _, err := validateWatchNote(secret); err == nil {
+			t.Fatalf("secret-like note was accepted: %q", secret)
+		}
+	}
+}
+
+func TestUpdateGroupPreservesDisabledPrivateNote(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{{ID: "group", Label: "old", Category: "cold", Notes: "keep this context"}}
+	form := url.Values{
+		"label":          {"renamed"},
+		"category":       {"savings"},
+		"notify_mode":    {"all"},
+		"notify_minimum": {"0"},
+		"notify_after":   {"0"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/groups/group/update", strings.NewReader(form.Encode()))
+	request.SetPathValue("id", "group")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusSeeOther || a.state.Groups[0].Notes != "keep this context" {
+		t.Fatalf("note was not preserved: status=%d group=%+v", response.Code, a.state.Groups[0])
+	}
+}
+
+func TestSetThemePersistsValidatedTheme(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := SetTheme(dataDir, "not-a-theme"); err == nil {
+		t.Fatal("invalid theme was accepted")
+	}
+	if err := SetTheme(dataDir, "paper"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved state
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Theme != "paper" || selectedTheme(saved.Theme) != "paper" || selectedTheme("unknown") != defaultTheme {
+		t.Fatalf("unexpected saved theme: %+v", saved)
 	}
 }
