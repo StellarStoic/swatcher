@@ -112,9 +112,75 @@ func TestNotificationScheduleHelpers(t *testing.T) {
 	if notificationQuietNow(c, time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)) {
 		t.Fatal("quiet hours included local noon")
 	}
-	message := digestMessage([]Event{{GroupID: "g", Direction: "received", Received: 42, TxID: "txid"}}, map[string]string{"g": "donations / website"})
+	message := digestMessage(
+		[]Event{{GroupID: "g", Direction: "received", Received: 42, Net: 42, TxID: "txid"}},
+		map[string]string{"g": "donations / website"},
+		map[string]notificationBalance{"g": {Confirmed: 1234}},
+		0,
+		"",
+	)
 	if !strings.Contains(message, "daily digest: 1 activities") || !strings.Contains(message, "donations / website") || !strings.Contains(message, "42 sat") {
 		t.Fatalf("unexpected digest: %s", message)
+	}
+}
+
+func TestActivityMessageIncludesTrackedDetailsAndOnionTransactionLink(t *testing.T) {
+	event := Event{
+		Direction:    "received",
+		Received:     12_345,
+		Net:          12_345,
+		TxID:         strings.Repeat("a", 64),
+		Height:       900,
+		Replaceable:  true,
+		Runestone:    true,
+		Inscriptions: 2,
+		OPReturn:     []string{"thank you", "invoice 42"},
+		SeenAt:       time.Date(2026, 8, 6, 12, 30, 0, 0, time.UTC),
+	}
+	message := activityMessage(event, "donations / website", notificationBalance{Confirmed: 55_000, Unconfirmed: 500}, 902, "http://privateexplorer.onion/")
+	for _, expected := range []string{
+		"Watch: donations / website",
+		"Activity: Incoming",
+		"Received: 12345 sat",
+		"Sent: 0 sat",
+		"Net change: +12345 sat",
+		"block 900 · 3 confirmations",
+		"Current balance: 55000 sat · +500 sat pending",
+		"Runes: Runestone detected",
+		"Inscriptions: 2 inscription envelopes detected",
+		"OP_RETURN:\n• thank you\n• invoice 42",
+		"Detected: 2026-08-06 12:30 UTC",
+		"Transaction: http://privateexplorer.onion/tx/" + strings.Repeat("a", 64),
+	} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("rich activity message is missing %q:\n%s", expected, message)
+		}
+	}
+	if strings.Contains(message, "RBF:") {
+		t.Fatalf("confirmed transaction must not show an RBF warning: %s", message)
+	}
+}
+
+func TestActivityMessageUsesPlainTxIDWithoutOnionAndWarnsForRBF(t *testing.T) {
+	event := Event{Direction: "received", Received: 900, Net: 900, TxID: "plain-txid", Replaceable: true}
+	message := activityMessage(event, "cold / reserve", notificationBalance{Confirmed: 100}, 0, "")
+	for _, expected := range []string{"Activity: Incoming", "State: Unconfirmed · mempool", "RBF: Replaceable", "Transaction: plain-txid"} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("plain activity message is missing %q: %s", expected, message)
+		}
+	}
+	if strings.Contains(message, "/tx/") || strings.Contains(message, "http://") || strings.Contains(message, "https://") {
+		t.Fatalf("transaction became linkable without an onion interface: %s", message)
+	}
+}
+
+func TestMempoolOnionBaseIgnoresLANAndClearnetURLs(t *testing.T) {
+	urls := []string{"http://mempool.local", "https://mempool.example", "http://privateexplorer.onion/"}
+	if got := mempoolOnionBase(urls); got != "http://privateexplorer.onion" {
+		t.Fatalf("unexpected onion base %q", got)
+	}
+	if got := mempoolOnionBase(urls[:2]); got != "" {
+		t.Fatalf("non-onion URL was selected for notifications: %q", got)
 	}
 }
 
@@ -434,7 +500,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") || !strings.Contains(body, "new URLSearchParams(new FormData(addForm))") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
 }
@@ -479,6 +545,53 @@ func TestAddWatchAcceptsBrowserMultipartForSingleAndBulk(t *testing.T) {
 			}
 			if len(a.state.Groups) != 1 || a.state.Groups[0].Bulk != test.wantBulk || len(a.state.Watches) != test.wantWatches {
 				t.Fatalf("unexpected multipart state: groups=%+v watches=%d", a.state.Groups, len(a.state.Watches))
+			}
+		})
+	}
+}
+
+func TestAddWatchAcceptsProxySafeURLEncodingThroughSecurityMiddleware(t *testing.T) {
+	tests := []struct {
+		name        string
+		form        url.Values
+		wantWatches int
+	}{
+		{
+			name: "single address",
+			form: url.Values{
+				"label":    {"donations"},
+				"category": {"public"},
+				"source":   {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"},
+			},
+			wantWatches: 1,
+		},
+		{
+			name: "bulk addresses",
+			form: url.Values{
+				"label":        {"archive"},
+				"category":     {"old"},
+				"bulk_sources": {"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\nbc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"},
+			},
+			wantWatches: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(test.form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+			request.Header.Set("Accept", "application/json")
+			request.Header.Set("Sec-Fetch-Site", "same-origin")
+			response := httptest.NewRecorder()
+			securityHeaders(http.HandlerFunc(a.addWatch)).ServeHTTP(response, request)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("URL-encoded add status %d: %s", response.Code, response.Body.String())
+			}
+			if len(a.state.Groups) != 1 || len(a.state.Watches) != test.wantWatches {
+				t.Fatalf("unexpected URL-encoded state: groups=%+v watches=%d", a.state.Groups, len(a.state.Watches))
 			}
 		})
 	}

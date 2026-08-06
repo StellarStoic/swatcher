@@ -45,6 +45,10 @@ over a network can obtain its corresponding source from the
   interface.
 - Persist watches and events in `/data/state.json`.
 - Deliver retryable Telegram Bot API alerts and NIP-17 private Nostr messages.
+- Include tracked transaction details in immediate alerts and daily digests:
+  direction, received/sent/net amounts, confirmation or RBF state, current
+  balance, detection time, Runes and inscription markers, printable OP_RETURN
+  messages, and the transaction ID.
 - Persist per-channel delivery state so restarts do not duplicate alerts.
 - Configure each watched wallet for all, incoming-only, outgoing-only, or no
   alerts, with a minimum sat amount and mempool/1/3/6-confirmation timing.
@@ -280,6 +284,18 @@ been enabled and saved, its section exposes a one-shot **Send test message after
 save** switch. Selecting it sends during that submission and reports the real
 delivery error in the Notifications action. The switch resets to off whenever
 the form is reopened; service restarts never send tests automatically.
+
+Bitcoin activity alerts include the watch name and group, direction,
+received/sent/net amounts, confirmation state, current confirmed and pending
+balance, detection time, RBF status for replaceable incoming mempool
+transactions, Runes and inscription-envelope detections, and every printable
+OP_RETURN message retained by s/watcher (up to five per alert). If StartOS
+provides an onion interface for the optional local Mempool dependency, the
+transaction line uses its `/tx/` URL and is clickable in clients that recognize
+links. Without that onion interface, only the plain transaction ID is sent;
+s/watcher never inserts a clearnet explorer link. Daily digests use the same
+details and stop before Telegram's message-size limit, reporting how many
+additional activities remain.
 
 At container startup, a minimal bootstrap step grants the unprivileged
 `swatcher` process ownership of `/data`. The service then drops privileges

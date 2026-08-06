@@ -250,6 +250,11 @@ type App struct {
 	loginLockedUntil time.Time
 }
 
+type notificationBalance struct {
+	Confirmed   int64
+	Unconfirmed int64
+}
+
 func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
@@ -1422,9 +1427,11 @@ func (a *App) deliverPending() {
 	a.mu.RLock()
 	events := append([]Event(nil), a.state.Events...)
 	groups := append([]WatchGroup(nil), a.state.Groups...)
+	groupViews := a.groupViewsLocked()
 	a.mu.RUnlock()
 	labels := map[string]string{}
 	rules := map[string]WatchGroup{}
+	balances := map[string]notificationBalance{}
 	for _, g := range groups {
 		rules[g.ID] = g
 		if g.Category != "" {
@@ -1433,6 +1440,10 @@ func (a *App) deliverPending() {
 			labels[g.ID] = g.Label
 		}
 	}
+	for _, group := range groupViews {
+		balances[group.ID] = notificationBalance{Confirmed: group.Confirmed, Unconfirmed: group.Unconfirmed}
+	}
+	mempoolOnion := mempoolOnionBase(a.mempoolURLs)
 	tipHeight := int64(0)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if height, tipErr := a.client.TipHeight(ctx); tipErr == nil {
@@ -1440,7 +1451,7 @@ func (a *App) deliverPending() {
 	}
 	cancel()
 	if c.DailyDigest {
-		a.deliverDigest(c, events, labels, rules, tipHeight, time.Now().UTC())
+		a.deliverDigest(c, events, labels, rules, balances, tipHeight, mempoolOnion, time.Now().UTC())
 		return
 	}
 	if c.QuietHours && notificationQuietNow(c, time.Now().UTC()) {
@@ -1474,7 +1485,7 @@ func (a *App) deliverPending() {
 			a.mu.Unlock()
 			continue
 		}
-		msg := notify.Message(label, event.Direction, event.Received, event.Sent, event.TxID, event.Height)
+		msg := activityMessage(event, label, balances[event.GroupID], tipHeight, mempoolOnion)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		tg, nr := event.TelegramSent, event.NostrSent
 		if c.TelegramEnabled && !tg {
@@ -1515,7 +1526,7 @@ func notificationQuietNow(c notify.Config, now time.Time) bool {
 	return hour >= c.QuietStart || hour < c.QuietEnd
 }
 
-func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]string, rules map[string]WatchGroup, tipHeight int64, now time.Time) {
+func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]string, rules map[string]WatchGroup, balances map[string]notificationBalance, tipHeight int64, mempoolOnion string, now time.Time) {
 	local := now.Add(time.Duration(c.UTCOffset) * time.Hour)
 	date := local.Format("2006-01-02")
 	if local.Hour() < c.DigestHour {
@@ -1542,7 +1553,7 @@ func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]s
 	if len(ready) == 0 {
 		return
 	}
-	message := digestMessage(ready, labels)
+	message := digestMessage(ready, labels, balances, tipHeight, mempoolOnion)
 	tgSent, nrSent := false, false
 	if c.TelegramEnabled && lastTelegram != date {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -1604,24 +1615,117 @@ func (a *App) markEventDelivery(event Event, telegram, nostr bool) {
 	_ = a.saveLocked()
 }
 
-func digestMessage(events []Event, labels map[string]string) string {
+func digestMessage(events []Event, labels map[string]string, balances map[string]notificationBalance, tipHeight int64, mempoolOnion string) string {
 	var message strings.Builder
 	fmt.Fprintf(&message, "s/watcher daily digest: %d activities", len(events))
 	limit := len(events)
 	if limit > 10 {
 		limit = 10
 	}
+	included := 0
 	for _, event := range events[:limit] {
 		label := labels[event.GroupID]
 		if label == "" {
 			label = "Bitcoin watch"
 		}
-		fmt.Fprintf(&message, "\n\n%s\n%s · received %d sat · sent %d sat\n%s", label, event.Direction, event.Received, event.Sent, event.TxID)
+		section := "\n\n———\n" + activityMessage(event, label, balances[event.GroupID], tipHeight, mempoolOnion)
+		if utf8.RuneCountInString(message.String())+utf8.RuneCountInString(section) > 3800 {
+			break
+		}
+		message.WriteString(section)
+		included++
 	}
-	if len(events) > limit {
-		fmt.Fprintf(&message, "\n\n…and %d more activities.", len(events)-limit)
+	if len(events) > included {
+		fmt.Fprintf(&message, "\n\n…and %d more activities.", len(events)-included)
 	}
 	return message.String()
+}
+
+func activityMessage(event Event, label string, balance notificationBalance, tipHeight int64, mempoolOnion string) string {
+	var message strings.Builder
+	fmt.Fprintf(&message, "s/watcher activity\nWatch: %s\nActivity: %s\nReceived: %d sat\nSent: %d sat\nNet change: %+d sat", label, notificationDirection(event.Direction), event.Received, event.Sent, event.Net)
+	if event.Height > 0 {
+		confirmations := int64(1)
+		if tipHeight >= event.Height {
+			confirmations = tipHeight - event.Height + 1
+		}
+		fmt.Fprintf(&message, "\nState: Confirmed · block %d · %d confirmation", event.Height, confirmations)
+		if confirmations != 1 {
+			message.WriteByte('s')
+		}
+	} else {
+		message.WriteString("\nState: Unconfirmed · mempool")
+	}
+	fmt.Fprintf(&message, "\nCurrent balance: %d sat", balance.Confirmed)
+	if balance.Unconfirmed != 0 {
+		fmt.Fprintf(&message, " · %+d sat pending", balance.Unconfirmed)
+	}
+	if event.Height == 0 && event.Replaceable && event.Direction == "received" {
+		message.WriteString("\nRBF: Replaceable — do not treat as final until confirmed.")
+	}
+	if event.Runestone {
+		message.WriteString("\nRunes: Runestone detected")
+	}
+	if event.Inscriptions > 0 {
+		fmt.Fprintf(&message, "\nInscriptions: %d inscription envelope", event.Inscriptions)
+		if event.Inscriptions != 1 {
+			message.WriteByte('s')
+		}
+		message.WriteString(" detected")
+	}
+	if len(event.OPReturn) > 0 {
+		message.WriteString("\nOP_RETURN:")
+		limit := len(event.OPReturn)
+		if limit > 5 {
+			limit = 5
+		}
+		for _, value := range event.OPReturn[:limit] {
+			fmt.Fprintf(&message, "\n• %s", truncateRunes(value, 160))
+		}
+		if len(event.OPReturn) > limit {
+			fmt.Fprintf(&message, "\n• …and %d more", len(event.OPReturn)-limit)
+		}
+	}
+	if !event.SeenAt.IsZero() {
+		fmt.Fprintf(&message, "\nDetected: %s", event.SeenAt.UTC().Format("2006-01-02 15:04 UTC"))
+	}
+	if mempoolOnion != "" {
+		fmt.Fprintf(&message, "\nTransaction: %s/tx/%s", strings.TrimRight(mempoolOnion, "/"), url.PathEscape(event.TxID))
+	} else {
+		fmt.Fprintf(&message, "\nTransaction: %s", event.TxID)
+	}
+	return message.String()
+}
+
+func notificationDirection(direction string) string {
+	switch direction {
+	case "received":
+		return "Incoming"
+	case "sent":
+		return "Outgoing"
+	case "self-transfer":
+		return "Self-transfer"
+	default:
+		return "Activity"
+	}
+}
+
+func mempoolOnionBase(urls []string) string {
+	for _, candidate := range urls {
+		parsed, err := url.Parse(candidate)
+		if err == nil && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".onion") {
+			return strings.TrimRight(candidate, "/")
+		}
+	}
+	return ""
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func notificationEligible(group WatchGroup, event Event, tipHeight int64) (eligible, waiting bool) {

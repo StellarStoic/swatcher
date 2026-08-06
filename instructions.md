@@ -249,3 +249,18 @@ channel's **Send test message after save** switch, and save once more. It sends:
 Consider this a test message.” The switch resets to off, delivery errors are
 shown immediately, and tests are not queued for automatic retry. Restarting
 s/watcher does not send another test.
+
+Activity notifications contain the watch name and group, incoming/outgoing or
+self-transfer direction, received and sent amounts, net change, confirmation
+state, current confirmed and pending balance, detection time, and the plain
+transaction ID. They also include an RBF warning for replaceable incoming
+mempool transactions, Runes and inscription-envelope detections, and printable
+OP_RETURN messages when present. Up to five OP_RETURN messages are included in
+one alert.
+
+When StartOS exposes an onion address for the optional local Mempool service,
+the transaction line becomes that local `/tx/` URL so Telegram and compatible
+Nostr clients can open it. If no Mempool onion interface is available, the
+transaction remains a non-linkable ID. s/watcher never substitutes a clearnet
+explorer. Daily digests contain the same details and summarize omitted events
+before reaching Telegram's message-size limit.

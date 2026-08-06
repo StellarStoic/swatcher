@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
@@ -182,11 +181,4 @@ func (s Sender) client() *http.Client {
 		return s.HTTP
 	}
 	return &http.Client{Timeout: 15 * time.Second}
-}
-func Message(label, direction string, received, sent uint64, txid string, height int64) string {
-	state := "mempool"
-	if height > 0 {
-		state = fmt.Sprintf("block %d", height)
-	}
-	return strings.TrimSpace(fmt.Sprintf("s/watcher: %s\n%s · received %d sat · sent %d sat\n%s\n%s", label, direction, received, sent, state, txid))
 }
