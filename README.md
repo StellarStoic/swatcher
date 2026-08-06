@@ -314,7 +314,16 @@ Nostr delivery is NIP-17 only: kind 14 rumors are NIP-44 sealed and NIP-59
 gift-wrapped as kind 1059. Recipient delivery uses the recipient's kind 10050
 relay list discovered through the configured relays. A kind 0 sender profile
 containing the configured name and selected DiceBear avatar is published to the
-configured relays.
+configured relays. Relays that require NIP-42 are authenticated with the
+dedicated sender identity before delivery is retried. Recipient relays are
+attempted concurrently, and failed tests report the reason returned by each
+relay.
+
+Tor is an optional StartOS dependency. When it is installed and running,
+s/watcher routes only `.onion` Nostr relay connections through Tor's internal
+SOCKS bridge; clearnet Nostr relays and Telegram remain direct. If the
+recipient's kind 10050 list contains only onion relays, Tor must be available
+for notifications and the Notifications test action to succeed.
 
 The recipient field accepts and validates only an `npub` public key. An
 accidentally pasted `nsec` is rejected before configuration is written and a

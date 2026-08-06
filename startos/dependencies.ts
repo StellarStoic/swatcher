@@ -14,4 +14,9 @@ export const setDependencies = sdk.setupDependencies(async () => ({
     versionRange: '>=3.3.1:11',
     healthChecks: ['webui'],
   },
+  tor: {
+    kind: 'running',
+    versionRange: '>=0.4.9.11:1',
+    healthChecks: ['tor'],
+  },
 }))

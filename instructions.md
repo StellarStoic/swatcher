@@ -201,6 +201,14 @@ You may edit this list. Leaving it empty restores these defaults. If Nostr test
 delivery still reports that the recipient has no kind 10050 relay list, open
 the receiving Nostr client and configure/publish its private-message relays;
 ordinary profile or outbox relays do not replace the NIP-17 kind 10050 list.
+Relays that request NIP-42 authentication are authenticated with s/watcher's
+dedicated sender identity. All recipient relays are attempted concurrently,
+and a failed test identifies the reason returned by each relay.
+
+Tor is an optional s/watcher dependency. When StartOS Tor is installed and
+running, `.onion` relay connections use its internal SOCKS proxy while clearnet
+Nostr and Telegram connections remain direct. Tor is required when every relay
+in the recipient's kind 10050 list is an onion address.
 
 ### Telegram personal notifications
 

@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:29',
+  version: '0.1.0:30',
   releaseNotes: {
     en_US:
-      'Fixes watch submissions and adds detailed Telegram and NIP-17 messages with local onion transaction links, protocol markers, OP_RETURN text, balances, and confirmation state.',
+      'Fixes NIP-17 delivery to authenticated relays with NIP-42, adds optional StartOS Tor routing for onion relays, and reports actionable per-relay delivery errors.',
     de_DE:
-      'Behebt Übermittlungen neuer Überwachungen und ergänzt detaillierte Telegram- und NIP-17-Meldungen mit lokalen Onion-Transaktionslinks, Protokollmarkierungen, OP_RETURN-Text, Salden und Bestätigungsstatus.',
+      'Behebt die NIP-17-Zustellung an authentifizierte Relays mit NIP-42, ergänzt optionales StartOS-Tor-Routing für Onion-Relays und meldet aussagekräftige Zustellfehler je Relay.',
   },
   migrations: {
     up: async () => {},

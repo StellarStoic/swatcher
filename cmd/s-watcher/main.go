@@ -22,6 +22,9 @@ import (
 const testMessage = "You receive this message because you enabled Notifications in s/watcher. Consider this a test message."
 
 func main() {
+	if err := notify.ConfigureTorSOCKS(os.Getenv("TOR_SOCKS_ADDR")); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "set-web-password" {
 		password, err := io.ReadAll(io.LimitReader(os.Stdin, 2049))
 		if err != nil {

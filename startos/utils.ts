@@ -6,6 +6,7 @@ import { sdk } from './sdk'
 
 export const uiPort = 8080
 export const electrumPort = 50001
+export const torSocksPort = 9050
 
 export const electrumBridge = (effects: T.Effects) =>
   sdk.host
@@ -32,4 +33,15 @@ export async function localMempoolUrls(effects: T.Effects): Promise<string[]> {
         (!hostname.public && hostname.metadata.kind !== 'plugin'),
     })
     .format('urlstring')
+}
+
+export async function torSocksBridge(
+  effects: T.Effects,
+): Promise<string | undefined> {
+  const host = await sdk.host
+    .get(effects, { packageId: 'tor', hostId: 'socks' })
+    .const()
+  if (!host?.bindings[torSocksPort]) return undefined
+
+  return `${await sdk.getOsIp(effects)}:${torSocksPort}`
 }

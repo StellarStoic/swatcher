@@ -5,6 +5,7 @@ package notify
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,42 @@ import (
 
 	"github.com/nbd-wtf/go-nostr/nip19"
 )
+
+func TestAuthRequiredRecognizesRelayPublishErrors(t *testing.T) {
+	for _, message := range []string{
+		"auth-required: sign in",
+		"msg: auth-required: sign in",
+	} {
+		if !isAuthRequired(errors.New(message)) {
+			t.Fatalf("expected %q to require NIP-42 authentication", message)
+		}
+	}
+	for _, err := range []error{nil, errors.New("msg: restricted: denied")} {
+		if isAuthRequired(err) {
+			t.Fatalf("did not expect %v to require NIP-42 authentication", err)
+		}
+	}
+}
+
+func TestUniqueRelayURLs(t *testing.T) {
+	got := uniqueRelayURLs([]string{" wss://relay.example ", "", "wss://relay.example", "ws://relay2.example"})
+	if len(got) != 2 || got[0] != "wss://relay.example" || got[1] != "ws://relay2.example" {
+		t.Fatalf("unexpected relay URLs: %#v", got)
+	}
+}
+
+func TestDisplayRelayURLRemovesCredentialsAndQuery(t *testing.T) {
+	got := displayRelayURL("wss://user:secret@relay.example/path?token=secret#fragment")
+	if got != "wss://relay.example/path" {
+		t.Fatalf("unexpected display URL: %q", got)
+	}
+}
+
+func TestConfigureTorSOCKSRejectsInvalidAddress(t *testing.T) {
+	if err := ConfigureTorSOCKS("not-a-host-port"); err == nil {
+		t.Fatal("expected invalid Tor SOCKS address to be rejected")
+	}
+}
 
 func TestEnsureIdentityGeneratesAndPersistsNostrKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notifications.json")

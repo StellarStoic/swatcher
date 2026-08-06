@@ -9,15 +9,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/keyer"
 	"github.com/nbd-wtf/go-nostr/nip17"
 	"github.com/nbd-wtf/go-nostr/nip19"
+	"golang.org/x/net/proxy"
 )
 
 type Config struct {
@@ -42,6 +46,49 @@ type Config struct {
 type Sender struct {
 	Path string
 	HTTP *http.Client
+}
+
+// ConfigureTorSOCKS routes only .onion HTTP and WebSocket connections through
+// the StartOS Tor SOCKS bridge. Clearnet Telegram and Nostr traffic remains
+// direct. It must be called before any notification connections are opened.
+func ConfigureTorSOCKS(address string) error {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(address); err != nil {
+		return fmt.Errorf("invalid Tor SOCKS address: %w", err)
+	}
+
+	direct := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	tor, err := proxy.SOCKS5("tcp", address, nil, direct)
+	if err != nil {
+		return fmt.Errorf("configure Tor SOCKS: %w", err)
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return errors.New("configure Tor SOCKS: unsupported default HTTP transport")
+	}
+	configured := transport.Clone()
+	configured.DialContext = conditionalDialContext(direct, tor)
+	http.DefaultTransport = configured
+	return nil
+}
+
+func conditionalDialContext(direct *net.Dialer, tor proxy.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.HasSuffix(strings.ToLower(strings.TrimSuffix(host, ".")), ".onion") {
+			return direct.DialContext(ctx, network, address)
+		}
+		if contextual, ok := tor.(proxy.ContextDialer); ok {
+			return contextual.DialContext(ctx, network, address)
+		}
+		return tor.Dial(network, address)
+	}
 }
 
 func (s Sender) Load() (Config, error) {
@@ -114,16 +161,8 @@ func (s Sender) EnsureProfile(ctx context.Context, c Config) (Config, error) {
 	}
 	pool := nostr.NewSimplePool(ctx)
 	defer pool.Close("profile published")
-	published := false
-	for _, relayURL := range c.NostrRelays {
-		if relay, relayErr := pool.EnsureRelay(relayURL); relayErr == nil {
-			if relay.Publish(ctx, profile) == nil {
-				published = true
-			}
-		}
-	}
-	if !published {
-		return c, errors.New("could not publish sender profile to any configured relay")
+	if err := publishToAny(ctx, pool, c.NostrRelays, profile, kr); err != nil {
+		return c, fmt.Errorf("could not publish sender profile: %w", err)
 	}
 	c.NostrProfilePublished = true
 	return c, s.save(c)
@@ -174,8 +213,108 @@ func (s Sender) Nostr(ctx context.Context, c Config, message string) error {
 	if len(their) == 0 {
 		return errors.New("recipient has no NIP-17 kind 10050 relay list")
 	}
-	return nip17.PublishMessage(ctx, message, nil, pool, c.NostrRelays, their, kr, rv.(string), nil)
+	toUs, toThem, e := nip17.PrepareMessage(ctx, message, nil, kr, rv.(string), nil)
+	if e != nil {
+		return fmt.Errorf("prepare NIP-17 message: %w", e)
+	}
+	if e = publishToAny(ctx, pool, c.NostrRelays, toUs, kr); e != nil {
+		return fmt.Errorf("store sender copy: %w", e)
+	}
+	if e = publishToAny(ctx, pool, their, toThem, kr); e != nil {
+		return fmt.Errorf("deliver to recipient: %w", e)
+	}
+	return nil
 }
+
+type relayResult struct {
+	url string
+	err error
+}
+
+func publishToAny(ctx context.Context, pool *nostr.SimplePool, relayURLs []string, event nostr.Event, signer nostr.Keyer) error {
+	urls := uniqueRelayURLs(relayURLs)
+	if len(urls) == 0 {
+		return errors.New("no relays configured")
+	}
+
+	attemptCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan relayResult, len(urls))
+	for _, relayURL := range urls {
+		go func() {
+			results <- relayResult{url: relayURL, err: publishWithAuth(attemptCtx, pool, relayURL, event, signer)}
+		}()
+	}
+
+	failures := make([]string, 0, len(urls))
+	for range urls {
+		result := <-results
+		if result.err == nil {
+			cancel()
+			return nil
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", displayRelayURL(result.url), result.err))
+	}
+	sort.Strings(failures)
+	return fmt.Errorf("no relay accepted the event (%s)", strings.Join(failures, "; "))
+}
+
+func publishWithAuth(ctx context.Context, pool *nostr.SimplePool, relayURL string, event nostr.Event, signer nostr.Keyer) error {
+	relay, err := pool.EnsureRelay(relayURL)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	if err = relay.Publish(ctx, event); !isAuthRequired(err) {
+		return err
+	}
+	if err = relay.Auth(ctx, func(authEvent *nostr.Event) error {
+		return signer.SignEvent(ctx, authEvent)
+	}); err != nil {
+		return fmt.Errorf("NIP-42 authentication: %w", err)
+	}
+	if err = relay.Publish(ctx, event); err != nil {
+		return fmt.Errorf("publish after NIP-42 authentication: %w", err)
+	}
+	return nil
+}
+
+func isAuthRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	reason := strings.TrimSpace(err.Error())
+	reason = strings.TrimPrefix(reason, "msg: ")
+	return strings.HasPrefix(reason, "auth-required:")
+}
+
+func uniqueRelayURLs(relayURLs []string) []string {
+	seen := make(map[string]struct{}, len(relayURLs))
+	unique := make([]string, 0, len(relayURLs))
+	for _, relayURL := range relayURLs {
+		relayURL = strings.TrimSpace(relayURL)
+		if relayURL == "" {
+			continue
+		}
+		if _, exists := seen[relayURL]; exists {
+			continue
+		}
+		seen[relayURL] = struct{}{}
+		unique = append(unique, relayURL)
+	}
+	return unique
+}
+
+func displayRelayURL(relayURL string) string {
+	parsed, err := url.Parse(relayURL)
+	if err != nil {
+		return relayURL
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
 func (s Sender) client() *http.Client {
 	if s.HTTP != nil {
 		return s.HTTP

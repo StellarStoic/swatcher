@@ -43,5 +43,14 @@ export const manifest = setupManifest({
         icon: 'https://raw.githubusercontent.com/Start9Labs/mempool-startos/refs/heads/master/icon.svg',
       },
     },
+    tor: {
+      description:
+        'Optional Tor SOCKS proxy used to deliver NIP-17 messages to onion relays.',
+      optional: true,
+      metadata: {
+        title: 'Tor',
+        icon: 'https://raw.githubusercontent.com/Start9Labs/tor-startos/refs/heads/master/icon.svg',
+      },
+    },
   },
 })
