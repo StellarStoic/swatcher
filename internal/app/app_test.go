@@ -300,20 +300,23 @@ func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
 	a.state.Watches = []Watch{{ID: "watch", GroupID: "group", Confirmed: 200_000_000, Initialized: true, LastTxID: "tx-204", LastTxAt: time.Unix(204, 0).UTC()}}
 	for index := 0; index < 205; index++ {
 		a.state.Events = append(a.state.Events, Event{
-			WatchID:              "watch",
-			GroupID:              "group",
-			TxID:                 fmt.Sprintf("tx-%03d", index),
-			Direction:            "received",
-			Received:             uint64(index + 1),
-			Net:                  int64(index + 1),
-			Height:               int64(index + 1),
-			Runestone:            index == 100,
-			Inscriptions:         map[bool]int{true: 2}[index == 100],
-			OPReturn:             map[bool][]string{true: {"history note"}}[index == 100],
-			SpentAddresses:       map[bool][]string{true: {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"}}[index == 100],
-			SourceAddresses:      map[bool][]string{true: {"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0"}}[index == 100],
-			DestinationAddresses: map[bool][]string{true: {"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"}}[index == 100],
-			SeenAt:               time.Unix(int64(index), 0).UTC(),
+			WatchID:                   "watch",
+			GroupID:                   "group",
+			TxID:                      fmt.Sprintf("tx-%03d", index),
+			Direction:                 "received",
+			Received:                  uint64(index + 1),
+			Net:                       int64(index + 1),
+			Height:                    int64(index + 1),
+			Runestone:                 index == 100,
+			Inscriptions:              map[bool]int{true: 2}[index == 100],
+			OPReturn:                  map[bool][]string{true: {"history note"}}[index == 100],
+			SpentAddresses:            map[bool][]string{true: {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"}}[index == 100],
+			SourceAddresses:           map[bool][]string{true: {"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0"}}[index == 100],
+			DestinationAddresses:      map[bool][]string{true: {"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"}}[index == 100],
+			SpentAddressAmounts:       map[bool]map[string]uint64{true: {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa": 1_234}}[index == 100],
+			SourceAddressAmounts:      map[bool]map[string]uint64{true: {"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0": 123_432}}[index == 100],
+			DestinationAddressAmounts: map[bool]map[string]uint64{true: {"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy": 12_233_444}}[index == 100],
+			SeenAt:                    time.Unix(int64(index), 0).UTC(),
 		})
 	}
 	indexResponse := httptest.NewRecorder()
@@ -329,7 +332,7 @@ func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", response.Code, body)
 	}
-	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0", "From watched address", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "To address", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "http://mempool.local", "2 BTC"} {
+	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0", "123432 sat", "From watched address", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "1234 sat", "To address", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "0.12233444 BTC", "http://mempool.local", "2 BTC"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("history page is missing %q", expected)
 		}
@@ -357,14 +360,16 @@ func TestTransactionHistoryPrivacyModeMasksAmountsAndTxIDs(t *testing.T) {
 		PrivacyMode: true,
 		Groups:      []WatchGroup{{ID: "group", Label: "savings", Category: "cold", Source: "address", ScriptType: "address", Count: 1}},
 		Watches:     []Watch{{ID: "watch", GroupID: "group", Confirmed: 200_000_000, Initialized: true}},
-		Events:      []Event{{WatchID: "watch", GroupID: "group", TxID: txID, Direction: "self-transfer", Received: 200_000_000, Net: 200_000_000, ReceivedAddresses: []string{receivedAddress}, SpentAddresses: []string{receivedAddress}, SourceAddresses: []string{sourceAddress}, DestinationAddresses: []string{destinationAddress}, SeenAt: time.Now()}},
+		Events: []Event{{WatchID: "watch", GroupID: "group", TxID: txID, Direction: "self-transfer", Received: 200_000_000, Net: 200_000_000,
+			ReceivedAddresses: []string{receivedAddress}, SpentAddresses: []string{receivedAddress}, SourceAddresses: []string{sourceAddress}, DestinationAddresses: []string{destinationAddress},
+			SpentAddressAmounts: map[string]uint64{receivedAddress: 123_432}, SourceAddressAmounts: map[string]uint64{sourceAddress: 123_432}, DestinationAddressAmounts: map[string]uint64{destinationAddress: 123_432}, SeenAt: time.Now()}},
 	}
 	request := httptest.NewRequest(http.MethodGet, "/groups/group/transactions", nil)
 	request.SetPathValue("id", "group")
 	response := httptest.NewRecorder()
 	a.groupTransactions(response, request)
 	body := response.Body.String()
-	for _, secret := range []string{txID, receivedAddress, sourceAddress, destinationAddress, "2 BTC", "200000000"} {
+	for _, secret := range []string{txID, receivedAddress, sourceAddress, destinationAddress, "2 BTC", "200000000", "123432 sat"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("privacy history exposed %q", secret)
 		}
@@ -1031,7 +1036,7 @@ func TestCombineGroupsMergesHistoryAndPreservesNotes(t *testing.T) {
 		t.Fatalf("shared transaction was not consolidated: %+v", a.state.Events)
 	}
 	event := a.state.Events[0]
-	if event.GroupID != a.state.Groups[0].ID || event.WatchID != "watch-one" || event.Direction != "activity" || event.Received != 0 || event.Sent != 0 || event.Net != 0 || event.Runestone || !event.TelegramSent || !event.NostrSent || event.Historical || event.DetailsVersion != 0 || !event.DetailsPending || len(event.ReceivedAddresses) != 0 || len(event.SpentAddresses) != 0 || len(event.SourceAddresses) != 0 || len(event.DestinationAddresses) != 0 {
+	if event.GroupID != a.state.Groups[0].ID || event.WatchID != "watch-one" || event.Direction != "activity" || event.Received != 0 || event.Sent != 0 || event.Net != 0 || event.Runestone || !event.TelegramSent || !event.NostrSent || event.Historical || event.DetailsVersion != 0 || !event.DetailsPending || len(event.ReceivedAddresses) != 0 || len(event.SpentAddresses) != 0 || len(event.SourceAddresses) != 0 || len(event.DestinationAddresses) != 0 || len(event.SpentAddressAmounts) != 0 || len(event.SourceAddressAmounts) != 0 || len(event.DestinationAddressAmounts) != 0 {
 		t.Fatalf("unexpected consolidated event: %+v", event)
 	}
 }

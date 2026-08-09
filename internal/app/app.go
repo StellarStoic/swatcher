@@ -69,28 +69,31 @@ type WatchGroup struct {
 }
 
 type Event struct {
-	WatchID              string    `json:"watchId"`
-	GroupID              string    `json:"groupId,omitempty"`
-	TxID                 string    `json:"txid"`
-	Height               int64     `json:"height"`
-	Direction            string    `json:"direction"`
-	Received             uint64    `json:"received"`
-	Sent                 uint64    `json:"sent"`
-	Net                  int64     `json:"net"`
-	OPReturn             []string  `json:"opReturn,omitempty"`
-	Replaceable          bool      `json:"replaceable,omitempty"`
-	Runestone            bool      `json:"runestone,omitempty"`
-	Inscriptions         int       `json:"inscriptions,omitempty"`
-	ReceivedAddresses    []string  `json:"receivedAddresses,omitempty"`
-	SpentAddresses       []string  `json:"spentAddresses,omitempty"`
-	SourceAddresses      []string  `json:"sourceAddresses,omitempty"`
-	DestinationAddresses []string  `json:"destinationAddresses,omitempty"`
-	DetailsVersion       int       `json:"detailsVersion,omitempty"`
-	DetailsPending       bool      `json:"detailsPending,omitempty"`
-	Historical           bool      `json:"historical,omitempty"`
-	SeenAt               time.Time `json:"seenAt"`
-	TelegramSent         bool      `json:"telegramSent,omitempty"`
-	NostrSent            bool      `json:"nostrSent,omitempty"`
+	WatchID                   string            `json:"watchId"`
+	GroupID                   string            `json:"groupId,omitempty"`
+	TxID                      string            `json:"txid"`
+	Height                    int64             `json:"height"`
+	Direction                 string            `json:"direction"`
+	Received                  uint64            `json:"received"`
+	Sent                      uint64            `json:"sent"`
+	Net                       int64             `json:"net"`
+	OPReturn                  []string          `json:"opReturn,omitempty"`
+	Replaceable               bool              `json:"replaceable,omitempty"`
+	Runestone                 bool              `json:"runestone,omitempty"`
+	Inscriptions              int               `json:"inscriptions,omitempty"`
+	ReceivedAddresses         []string          `json:"receivedAddresses,omitempty"`
+	SpentAddresses            []string          `json:"spentAddresses,omitempty"`
+	SourceAddresses           []string          `json:"sourceAddresses,omitempty"`
+	DestinationAddresses      []string          `json:"destinationAddresses,omitempty"`
+	SpentAddressAmounts       map[string]uint64 `json:"spentAddressAmounts,omitempty"`
+	SourceAddressAmounts      map[string]uint64 `json:"sourceAddressAmounts,omitempty"`
+	DestinationAddressAmounts map[string]uint64 `json:"destinationAddressAmounts,omitempty"`
+	DetailsVersion            int               `json:"detailsVersion,omitempty"`
+	DetailsPending            bool              `json:"detailsPending,omitempty"`
+	Historical                bool              `json:"historical,omitempty"`
+	SeenAt                    time.Time         `json:"seenAt"`
+	TelegramSent              bool              `json:"telegramSent,omitempty"`
+	NostrSent                 bool              `json:"nostrSent,omitempty"`
 }
 
 type state struct {
@@ -113,7 +116,7 @@ const defaultDiscoveryGap = 20
 const maxBulkAddresses = 10000
 const maxWatchFormBytes = 2 << 20
 const defaultTheme = "bitcoin-night"
-const currentEventDetailsVersion = 2
+const currentEventDetailsVersion = 3
 
 var themes = map[string]bool{
 	"bitcoin-night": true,
@@ -173,19 +176,27 @@ type groupView struct {
 
 type eventView struct {
 	Event
-	DisplayAmount                string
-	DisplayReceived              string
-	DisplaySent                  string
-	DisplayNet                   string
-	DisplayTxID                  string
-	DisplayReceivedAddresses     []string
-	DisplaySpentAddresses        []string
-	DisplaySourceAddresses       []string
-	DisplayDestinationAddresses  []string
-	ReuseCount                   int
-	SmallDeposit                 bool
-	CombinedGroups               int
-	DisplaySmallDepositThreshold string
+	DisplayAmount                    string
+	DisplayReceived                  string
+	DisplaySent                      string
+	DisplayNet                       string
+	DisplayTxID                      string
+	DisplayReceivedAddresses         []string
+	DisplaySpentAddresses            []string
+	DisplaySourceAddresses           []string
+	DisplayDestinationAddresses      []string
+	DisplaySpentAddressAmounts       []addressAmountView
+	DisplaySourceAddressAmounts      []addressAmountView
+	DisplayDestinationAddressAmounts []addressAmountView
+	ReuseCount                       int
+	SmallDeposit                     bool
+	CombinedGroups                   int
+	DisplaySmallDepositThreshold     string
+}
+
+type addressAmountView struct {
+	Address string
+	Amount  string
 }
 
 type transactionPageData struct {
@@ -645,19 +656,22 @@ func (a *App) transactionEventViewsLocked(groupID string) []eventView {
 			continue
 		}
 		view := eventView{
-			Event:                        event,
-			DisplayAmount:                eventAmount(event),
-			DisplayReceived:              formatBitcoinAmount(event.Received),
-			DisplaySent:                  formatBitcoinAmount(event.Sent),
-			DisplayNet:                   formatSignedBitcoinAmount(event.Net, true),
-			DisplayTxID:                  event.TxID,
-			DisplayReceivedAddresses:     append([]string(nil), event.ReceivedAddresses...),
-			DisplaySpentAddresses:        append([]string(nil), event.SpentAddresses...),
-			DisplaySourceAddresses:       append([]string(nil), event.SourceAddresses...),
-			DisplayDestinationAddresses:  append([]string(nil), event.DestinationAddresses...),
-			ReuseCount:                   reuseCount,
-			SmallDeposit:                 smallEnabled && event.Received > 0 && event.Received < smallThreshold,
-			DisplaySmallDepositThreshold: formatBitcoinAmount(smallThreshold),
+			Event:                            event,
+			DisplayAmount:                    eventAmount(event),
+			DisplayReceived:                  formatBitcoinAmount(event.Received),
+			DisplaySent:                      formatBitcoinAmount(event.Sent),
+			DisplayNet:                       formatSignedBitcoinAmount(event.Net, true),
+			DisplayTxID:                      event.TxID,
+			DisplayReceivedAddresses:         append([]string(nil), event.ReceivedAddresses...),
+			DisplaySpentAddresses:            append([]string(nil), event.SpentAddresses...),
+			DisplaySourceAddresses:           append([]string(nil), event.SourceAddresses...),
+			DisplayDestinationAddresses:      append([]string(nil), event.DestinationAddresses...),
+			DisplaySpentAddressAmounts:       addressAmountViews(event.SpentAddresses, event.SpentAddressAmounts, a.state.PrivacyMode),
+			DisplaySourceAddressAmounts:      addressAmountViews(event.SourceAddresses, event.SourceAddressAmounts, a.state.PrivacyMode),
+			DisplayDestinationAddressAmounts: addressAmountViews(event.DestinationAddresses, event.DestinationAddressAmounts, a.state.PrivacyMode),
+			ReuseCount:                       reuseCount,
+			SmallDeposit:                     smallEnabled && event.Received > 0 && event.Received < smallThreshold,
+			DisplaySmallDepositThreshold:     formatBitcoinAmount(smallThreshold),
 		}
 		if !reuseEnabled || view.ReuseCount < 2 {
 			view.ReuseCount = 0
@@ -1478,6 +1492,7 @@ func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[stri
 		event.OPReturn = nil
 		event.Replaceable, event.Runestone, event.Inscriptions = false, false, 0
 		event.ReceivedAddresses, event.SpentAddresses, event.SourceAddresses, event.DestinationAddresses = nil, nil, nil, nil
+		event.SpentAddressAmounts, event.SourceAddressAmounts, event.DestinationAddressAmounts = nil, nil, nil
 		event.DetailsVersion = 0
 		event.DetailsPending = true
 		indexes[event.TxID] = len(result)
@@ -1649,6 +1664,9 @@ func (a *App) poll() {
 				event.SpentAddresses = spentAddresses
 				event.SourceAddresses = effect.SourceAddresses
 				event.DestinationAddresses = effect.DestinationAddresses
+				event.SpentAddressAmounts = addressAmountsForScripts(effect.SpentScriptAmounts, groupScriptAddresses[result.groupID])
+				event.SourceAddressAmounts = cloneAddressAmounts(effect.SourceAddressAmounts)
+				event.DestinationAddressAmounts = cloneAddressAmounts(effect.DestinationAddressAmounts)
 				event.DetailsVersion = currentEventDetailsVersion
 				event.DetailsPending = false
 				if !seenAt.IsZero() {
@@ -1749,6 +1767,65 @@ func addressesForScripts(scripts []string, addresses map[string]string) []string
 		if address := addresses[script]; address != "" {
 			result = appendUniqueStrings(result, address)
 		}
+	}
+	return result
+}
+
+func addressAmountsForScripts(amounts map[string]uint64, addresses map[string]string) map[string]uint64 {
+	result := make(map[string]uint64)
+	for script, amount := range amounts {
+		if address := addresses[script]; address != "" {
+			result[address] += amount
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func cloneAddressAmounts(amounts map[string]uint64) map[string]uint64 {
+	if len(amounts) == 0 {
+		return nil
+	}
+	result := make(map[string]uint64, len(amounts))
+	for address, amount := range amounts {
+		result[address] = amount
+	}
+	return result
+}
+
+func addressAmountViews(addresses []string, amounts map[string]uint64, privacy bool) []addressAmountView {
+	result := make([]addressAmountView, 0, len(addresses))
+	seen := make(map[string]bool, len(addresses))
+	appendAddress := func(address string) {
+		if address == "" || seen[address] {
+			return
+		}
+		seen[address] = true
+		displayAddress := address
+		displayAmount := "Refreshing locally"
+		if amount, ok := amounts[address]; ok {
+			displayAmount = formatBitcoinAmount(amount)
+		}
+		if privacy {
+			displayAddress = maskIdentifier(address)
+			displayAmount = legacyMask(8)
+		}
+		result = append(result, addressAmountView{Address: displayAddress, Amount: displayAmount})
+	}
+	for _, address := range addresses {
+		appendAddress(address)
+	}
+	remaining := make([]string, 0, len(amounts))
+	for address := range amounts {
+		if !seen[address] {
+			remaining = append(remaining, address)
+		}
+	}
+	sort.Strings(remaining)
+	for _, address := range remaining {
+		appendAddress(address)
 	}
 	return result
 }

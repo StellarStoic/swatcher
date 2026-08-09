@@ -44,16 +44,19 @@ type Header struct {
 }
 
 type Effect struct {
-	Received             uint64
-	Sent                 uint64
-	OPReturn             []string
-	Replaceable          bool
-	Runestone            bool
-	Inscriptions         int
-	ReceivedScripts      []string
-	SpentScripts         []string
-	SourceAddresses      []string
-	DestinationAddresses []string
+	Received                  uint64
+	Sent                      uint64
+	OPReturn                  []string
+	Replaceable               bool
+	Runestone                 bool
+	Inscriptions              int
+	ReceivedScripts           []string
+	SpentScripts              []string
+	SourceAddresses           []string
+	DestinationAddresses      []string
+	SpentScriptAmounts        map[string]uint64
+	SourceAddressAmounts      map[string]uint64
+	DestinationAddressAmounts map[string]uint64
 }
 
 type response struct {
@@ -153,6 +156,7 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 			}
 			if address, ok := bitcoin.AddressFromScript(output.Script); ok {
 				effect.DestinationAddresses = appendUnique(effect.DestinationAddresses, address)
+				addAmount(&effect.DestinationAddressAmounts, address, output.Value)
 			}
 		}
 	}
@@ -163,11 +167,20 @@ func addInputEffect(effect *Effect, output bitcoin.TxOutput, watched map[string]
 	if watched[string(output.Script)] {
 		effect.Sent += output.Value
 		effect.SpentScripts = appendUnique(effect.SpentScripts, string(output.Script))
+		addAmount(&effect.SpentScriptAmounts, string(output.Script), output.Value)
 		return
 	}
 	if address, ok := bitcoin.AddressFromScript(output.Script); ok {
 		effect.SourceAddresses = appendUnique(effect.SourceAddresses, address)
+		addAmount(&effect.SourceAddressAmounts, address, output.Value)
 	}
+}
+
+func addAmount(amounts *map[string]uint64, key string, value uint64) {
+	if *amounts == nil {
+		*amounts = make(map[string]uint64)
+	}
+	(*amounts)[key] += value
 }
 
 func appendUnique(values []string, value string) []string {

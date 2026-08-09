@@ -40,6 +40,9 @@ func TestAddInputEffectResolvesExternalSourceAddress(t *testing.T) {
 	if len(effect.SourceAddresses) != 1 || effect.SourceAddresses[0] != sourceAddress {
 		t.Fatalf("unexpected source addresses: %#v", effect.SourceAddresses)
 	}
+	if effect.SourceAddressAmounts[sourceAddress] != 84_000 {
+		t.Fatalf("source inputs were not summed: %#v", effect.SourceAddressAmounts)
+	}
 	if effect.Sent != 0 || len(effect.SpentScripts) != 0 {
 		t.Fatalf("external input was counted as watched spending: %+v", effect)
 	}
@@ -53,7 +56,16 @@ func TestAddInputEffectCountsWatchedInputWithoutSourceLabel(t *testing.T) {
 	}
 	effect := Effect{}
 	addInputEffect(&effect, bitcoin.TxOutput{Value: 21_000, Script: script}, map[string]bool{string(script): true})
-	if effect.Sent != 21_000 || len(effect.SpentScripts) != 1 || len(effect.SourceAddresses) != 0 {
+	if effect.Sent != 21_000 || len(effect.SpentScripts) != 1 || effect.SpentScriptAmounts[string(script)] != 21_000 || len(effect.SourceAddresses) != 0 {
 		t.Fatalf("unexpected watched input effect: %+v", effect)
+	}
+}
+
+func TestAddAmountSumsRepeatedOutputs(t *testing.T) {
+	amounts := map[string]uint64{}
+	addAmount(&amounts, "address", 12_000)
+	addAmount(&amounts, "address", 345)
+	if amounts["address"] != 12_345 {
+		t.Fatalf("repeated output amounts were not summed: %#v", amounts)
 	}
 }

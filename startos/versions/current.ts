@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:1',
+  version: '0.1.1:2',
   releaseNotes: {
     en_US:
-      'Adds a private local Mempool link for inspecting addresses that are not found in saved s/watcher watches.',
+      'Shows the exact amount consumed from or sent to each input and output address in transaction history.',
     de_DE:
-      'Ergänzt einen privaten lokalen Mempool-Link zur Prüfung von Adressen, die nicht in gespeicherten s/watcher-Watches gefunden wurden.',
+      'Zeigt im Transaktionsverlauf für jede Ein- und Ausgangsadresse den genauen verbrauchten oder gesendeten Betrag.',
   },
   migrations: {
     up: async () => {},
