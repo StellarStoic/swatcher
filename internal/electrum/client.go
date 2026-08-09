@@ -52,6 +52,7 @@ type Effect struct {
 	Inscriptions         int
 	ReceivedScripts      []string
 	SpentScripts         []string
+	SourceAddresses      []string
 	DestinationAddresses []string
 }
 
@@ -143,11 +144,7 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 		if uint64(input.PreviousVout) >= uint64(len(previous.Outputs)) {
 			return Effect{}, fmt.Errorf("previous output %s:%d does not exist", input.PreviousTxID, input.PreviousVout)
 		}
-		output := previous.Outputs[input.PreviousVout]
-		if watched[string(output.Script)] {
-			effect.Sent += output.Value
-			effect.SpentScripts = appendUnique(effect.SpentScripts, string(output.Script))
-		}
+		addInputEffect(&effect, previous.Outputs[input.PreviousVout], watched)
 	}
 	if effect.Sent > 0 {
 		for _, output := range tx.Outputs {
@@ -160,6 +157,17 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 		}
 	}
 	return effect, nil
+}
+
+func addInputEffect(effect *Effect, output bitcoin.TxOutput, watched map[string]bool) {
+	if watched[string(output.Script)] {
+		effect.Sent += output.Value
+		effect.SpentScripts = appendUnique(effect.SpentScripts, string(output.Script))
+		return
+	}
+	if address, ok := bitcoin.AddressFromScript(output.Script); ok {
+		effect.SourceAddresses = appendUnique(effect.SourceAddresses, address)
+	}
 }
 
 func appendUnique(values []string, value string) []string {

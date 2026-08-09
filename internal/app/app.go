@@ -83,6 +83,7 @@ type Event struct {
 	Inscriptions         int       `json:"inscriptions,omitempty"`
 	ReceivedAddresses    []string  `json:"receivedAddresses,omitempty"`
 	SpentAddresses       []string  `json:"spentAddresses,omitempty"`
+	SourceAddresses      []string  `json:"sourceAddresses,omitempty"`
 	DestinationAddresses []string  `json:"destinationAddresses,omitempty"`
 	DetailsVersion       int       `json:"detailsVersion,omitempty"`
 	DetailsPending       bool      `json:"detailsPending,omitempty"`
@@ -112,7 +113,7 @@ const defaultDiscoveryGap = 20
 const maxBulkAddresses = 10000
 const maxWatchFormBytes = 2 << 20
 const defaultTheme = "bitcoin-night"
-const currentEventDetailsVersion = 1
+const currentEventDetailsVersion = 2
 
 var themes = map[string]bool{
 	"bitcoin-night": true,
@@ -179,6 +180,7 @@ type eventView struct {
 	DisplayTxID                  string
 	DisplayReceivedAddresses     []string
 	DisplaySpentAddresses        []string
+	DisplaySourceAddresses       []string
 	DisplayDestinationAddresses  []string
 	ReuseCount                   int
 	SmallDeposit                 bool
@@ -527,6 +529,7 @@ func (a *App) transactionEventViewsLocked(groupID string) []eventView {
 			DisplayTxID:                  event.TxID,
 			DisplayReceivedAddresses:     append([]string(nil), event.ReceivedAddresses...),
 			DisplaySpentAddresses:        append([]string(nil), event.SpentAddresses...),
+			DisplaySourceAddresses:       append([]string(nil), event.SourceAddresses...),
 			DisplayDestinationAddresses:  append([]string(nil), event.DestinationAddresses...),
 			ReuseCount:                   reuseCount,
 			SmallDeposit:                 smallEnabled && event.Received > 0 && event.Received < smallThreshold,
@@ -549,6 +552,7 @@ func (a *App) transactionEventViewsLocked(groupID string) []eventView {
 			view.DisplayTxID = maskIdentifier(event.TxID)
 			view.DisplayReceivedAddresses = maskIdentifiers(event.ReceivedAddresses)
 			view.DisplaySpentAddresses = maskIdentifiers(event.SpentAddresses)
+			view.DisplaySourceAddresses = maskIdentifiers(event.SourceAddresses)
 			view.DisplayDestinationAddresses = maskIdentifiers(event.DestinationAddresses)
 		}
 		views = append(views, view)
@@ -1349,7 +1353,7 @@ func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[stri
 		event.Received, event.Sent, event.Net = 0, 0, 0
 		event.OPReturn = nil
 		event.Replaceable, event.Runestone, event.Inscriptions = false, false, 0
-		event.ReceivedAddresses, event.SpentAddresses, event.DestinationAddresses = nil, nil, nil
+		event.ReceivedAddresses, event.SpentAddresses, event.SourceAddresses, event.DestinationAddresses = nil, nil, nil, nil
 		event.DetailsVersion = 0
 		event.DetailsPending = true
 		indexes[event.TxID] = len(result)
@@ -1519,6 +1523,7 @@ func (a *App) poll() {
 				event.Inscriptions = effect.Inscriptions
 				event.ReceivedAddresses = receivedAddresses
 				event.SpentAddresses = spentAddresses
+				event.SourceAddresses = effect.SourceAddresses
 				event.DestinationAddresses = effect.DestinationAddresses
 				event.DetailsVersion = currentEventDetailsVersion
 				event.DetailsPending = false

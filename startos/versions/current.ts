@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:39',
+  version: '0.1.0:40',
   releaseNotes: {
     en_US:
-      'Adds a Cancel control to combine-selection mode that clears selected watches and restores the normal interface without refreshing or changing scroll position.',
+      'Shows locally resolved input addresses as transaction sources in watch history and refreshes existing history after upgrade.',
     de_DE:
-      'Ergänzt einen Abbrechen-Schalter im Kombinieren-Auswahlmodus, der die Auswahl löscht und die normale Ansicht ohne Neuladen oder Positionsverlust wiederherstellt.',
+      'Zeigt lokal aufgelöste Eingabeadressen als Transaktionsquellen im Verlauf und aktualisiert bestehende Verlaufsdaten nach dem Upgrade.',
   },
   migrations: {
     up: async () => {},

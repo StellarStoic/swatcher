@@ -237,8 +237,9 @@ transaction ID along with the other identifiers.
 history page for the watch group. s/watcher imports the complete history
 returned by the StartOS-local Electrs service, including transactions that
 predate adding the watch; imported history is never sent as a new notification.
-The page includes received, sent, and net amounts, watched input and receiving
-addresses, external destination addresses for outgoing transactions,
+The page includes received, sent, and net amounts, external input addresses for
+incoming transactions, watched input addresses and external destination
+addresses for outgoing transactions,
 confirmation or mempool state, RBF status, Runes and inscription markers,
 OP_RETURN text, transaction time, and the local transaction link. It
 sorts by newest or oldest time, largest or smallest value, incoming or outgoing
@@ -248,6 +249,12 @@ addresses before the page is rendered. A transaction returned by Electrs is
 listed immediately even if its inputs cannot yet be decoded; it is marked
 **Details pending**, retried on later scans, and withheld from notifications
 until its amounts and direction are known.
+
+For incoming transactions, **From input address** is derived from the previous
+output spent by each transaction input. A transaction can list several input
+addresses, and these identify transaction inputs rather than proving the
+real-world sender. Non-address input scripts cannot be displayed. Existing
+history is enriched automatically after this upgrade.
 
 When the optional Mempool dependency is installed and running, visible
 transaction IDs in both the watch status and activity table open that

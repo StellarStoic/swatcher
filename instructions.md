@@ -142,14 +142,21 @@ including transactions from before the watch was added. Historical imports do
 not trigger notifications. The page shows 100 transactions at a time with
 previous and next navigation. Sort by newest or oldest, largest or smallest
 value, incoming or outgoing activity, or mempool and confirmed state. Each
-entry includes amounts, watched input and receiving addresses, external
-destination addresses for outgoing transactions, transaction state and time,
+entry includes amounts, external input addresses for incoming transactions,
+watched input addresses and external destination addresses for outgoing
+transactions, transaction state and time,
 the local Mempool link when available, and any RBF, Runes, inscription,
 privacy-indicator, or OP_RETURN details already detected by s/watcher. Privacy
 Mode masks amounts, transaction IDs, and addresses on this page too.
 If Electrs returns a transaction ID but its full inputs cannot yet be decoded,
 the transaction remains visible as **Details pending**. s/watcher retries it on
 later scans and does not send an incomplete notification.
+
+For incoming transactions, **From input address** is obtained from the previous
+output spent by each transaction input. Several input addresses may appear,
+and they do not prove a real-world sender identity. Inputs whose scripts cannot
+be represented as standard Bitcoin addresses are omitted. Existing transaction
+history is enriched automatically after upgrading.
 
 If the optional Mempool dependency is installed and running, visible
 transaction IDs in the watch list and New activity table are links to your own
