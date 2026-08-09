@@ -4,10 +4,13 @@ s/watcher privately monitors Bitcoin addresses for incoming and outgoing
 transactions using your own StartOS node, with optional notifications via
 NIP-17 encrypted Nostr messages or Telegram.
 
-Copyright (C) 2026 StellarStoic. s/watcher is free software licensed under the
-GNU Affero General Public License, version 3 or (at your option) any later
-version, and is provided without warranty. The license and corresponding source
-code are available at <https://github.com/StellarStoic/swatcher>.
+Copyleft 2026 StellarStoic. This is free software: everyone may use, study,
+review, copy, modify, and redistribute it under the GNU Affero General Public
+License, version 3 or (at your option) any later version. Modified and
+redistributed versions must preserve the license's source-sharing freedoms,
+including for users who interact with the software over a network. s/watcher
+is provided without warranty. The license and corresponding source code are
+available at <https://github.com/StellarStoic/swatcher>.
 
 ## Set the web password
 

@@ -5,13 +5,14 @@ transactions using your own StartOS node, with optional notifications via
 NIP-17 encrypted Nostr messages or Telegram. It talks only to the Electrs
 service installed on the same StartOS server.
 
-Copyright (C) 2026 StellarStoic.
-
-Licensed under the GNU Affero General Public License, version 3 or (at your
-option) any later version. s/watcher is provided without warranty. See
-[`LICENSE`](LICENSE) for the complete terms. Users interacting with s/watcher
-over a network can obtain its corresponding source from the
-[s/watcher repository](https://github.com/StellarStoic/swatcher).
+Copyleft 2026 StellarStoic. This is free software: everyone may use, study,
+review, copy, modify, and redistribute it under the GNU Affero General Public
+License, version 3 or (at your option) any later version. Modified and
+redistributed versions must preserve the license's source-sharing freedoms,
+including for users who interact with the software over a network. s/watcher
+is provided without warranty. See [`LICENSE`](LICENSE) for the complete terms
+and the [s/watcher repository](https://github.com/StellarStoic/swatcher) for
+corresponding source code.
 
 ## Current milestone
 
