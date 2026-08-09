@@ -1558,10 +1558,7 @@ type pollResult struct {
 func (a *App) poll() {
 	a.mu.RLock()
 	watches := append([]Watch(nil), a.state.Watches...)
-	eventVersions := make(map[string]int, len(a.state.Events))
-	for _, event := range a.state.Events {
-		eventVersions[effectiveEventGroupID(event)+"\x00"+event.TxID] = event.DetailsVersion
-	}
+	eventVersions := eventDetailVersions(a.state.Events)
 	a.mu.RUnlock()
 	groupScripts := make(map[string][][]byte)
 	groupScriptAddresses := make(map[string]map[string]string)
@@ -1701,6 +1698,32 @@ func (a *App) poll() {
 	}
 	a.mu.Unlock()
 	a.deliverPending()
+}
+
+func eventDetailVersions(events []Event) map[string]int {
+	versions := make(map[string]int, len(events))
+	for _, event := range events {
+		key := effectiveEventGroupID(event) + "\x00" + event.TxID
+		version := event.DetailsVersion
+		if !addressAmountsComplete(event.SpentAddresses, event.SpentAddressAmounts) ||
+			!addressAmountsComplete(event.SourceAddresses, event.SourceAddressAmounts) ||
+			!addressAmountsComplete(event.DestinationAddresses, event.DestinationAddressAmounts) {
+			version = 0
+		}
+		if existing, exists := versions[key]; !exists || version < existing {
+			versions[key] = version
+		}
+	}
+	return versions
+}
+
+func addressAmountsComplete(addresses []string, amounts map[string]uint64) bool {
+	for _, address := range addresses {
+		if _, exists := amounts[address]; !exists {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVersions map[string]int, groupKnown map[string]map[string]bool, groupInitialized map[string]bool) pollResult {
