@@ -267,7 +267,10 @@ returned by the StartOS-local Electrs service, including transactions that
 predate adding the watch; imported history is never sent as a new notification.
 The page includes received, sent, and net amounts, external input addresses for
 incoming transactions, watched input addresses and external destination
-addresses for outgoing transactions,
+addresses for outgoing transactions. Every displayed input and output address
+has its exact transaction amount beside it; repeated appearances of the same
+address are summed into one row. Values below one million sats are shown in
+sats and larger values are shown in BTC.
 confirmation or mempool state, RBF status, Runes and inscription markers,
 OP_RETURN text, transaction time, and the local transaction link. It
 sorts by newest or oldest time, largest or smallest value, incoming or outgoing
@@ -282,7 +285,7 @@ For incoming transactions, **From input address** is derived from the previous
 output spent by each transaction input. A transaction can list several input
 addresses, and these identify transaction inputs rather than proving the
 real-world sender. Non-address input scripts cannot be displayed. Existing
-history is enriched automatically after this upgrade.
+history is enriched with per-address amounts automatically after this upgrade.
 
 When the optional Mempool dependency is installed and running, visible
 transaction IDs in both the watch status and activity table open that
