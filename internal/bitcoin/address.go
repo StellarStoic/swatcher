@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/txscript"
 )
 
 const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -55,6 +58,17 @@ func ScriptPubKey(address string) ([]byte, error) {
 	default:
 		return nil, errors.New("only Bitcoin mainnet addresses are supported")
 	}
+}
+
+// AddressFromScript returns the mainnet address represented by a standard
+// output script. Scripts without a conventional address, including OP_RETURN,
+// return false.
+func AddressFromScript(script []byte) (string, bool) {
+	_, addresses, _, err := txscript.ExtractPkScriptAddrs(script, &chaincfg.MainNetParams)
+	if err != nil || len(addresses) != 1 {
+		return "", false
+	}
+	return addresses[0].EncodeAddress(), true
 }
 
 func decodeBase58Check(s string) ([]byte, error) {

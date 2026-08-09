@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"testing"
 	"time"
+
+	"github.com/s-watcher/s-watcher/internal/bitcoin"
 )
 
 func TestBlockTimeFromHeader(t *testing.T) {
@@ -22,5 +24,36 @@ func TestBlockTimeFromHeader(t *testing.T) {
 	}
 	if _, err := blockTimeFromHeader("00"); err == nil {
 		t.Fatal("short block header was accepted")
+	}
+}
+
+func TestAddInputEffectResolvesExternalSourceAddress(t *testing.T) {
+	const sourceAddress = "bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0"
+	script, err := bitcoin.ScriptPubKey(sourceAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effect := Effect{}
+	output := bitcoin.TxOutput{Value: 42_000, Script: script}
+	addInputEffect(&effect, output, map[string]bool{})
+	addInputEffect(&effect, output, map[string]bool{})
+	if len(effect.SourceAddresses) != 1 || effect.SourceAddresses[0] != sourceAddress {
+		t.Fatalf("unexpected source addresses: %#v", effect.SourceAddresses)
+	}
+	if effect.Sent != 0 || len(effect.SpentScripts) != 0 {
+		t.Fatalf("external input was counted as watched spending: %+v", effect)
+	}
+}
+
+func TestAddInputEffectCountsWatchedInputWithoutSourceLabel(t *testing.T) {
+	const watchedAddress = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+	script, err := bitcoin.ScriptPubKey(watchedAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effect := Effect{}
+	addInputEffect(&effect, bitcoin.TxOutput{Value: 21_000, Script: script}, map[string]bool{string(script): true})
+	if effect.Sent != 21_000 || len(effect.SpentScripts) != 1 || len(effect.SourceAddresses) != 0 {
+		t.Fatalf("unexpected watched input effect: %+v", effect)
 	}
 }

@@ -22,6 +22,9 @@ import (
 const testMessage = "You receive this message because you enabled Notifications in s/watcher. Consider this a test message."
 
 func main() {
+	if err := notify.ConfigureTorSOCKS(os.Getenv("TOR_SOCKS_ADDR")); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "set-web-password" {
 		password, err := io.ReadAll(io.LimitReader(os.Stdin, 2049))
 		if err != nil {
@@ -137,16 +140,22 @@ func testNotification(channel string) error {
 		if !config.TelegramEnabled {
 			return fmt.Errorf("Telegram notifications are disabled")
 		}
+		log.Printf("notification send started: channel=telegram type=test")
 		if err := sender.Telegram(ctx, config, testMessage); err != nil {
+			log.Printf("notification send failed: channel=telegram type=test error=%v", err)
 			return fmt.Errorf("send Telegram test: %w", err)
 		}
+		log.Printf("notification send succeeded: channel=telegram type=test")
 	case "nostr":
 		if !config.NostrEnabled {
 			return fmt.Errorf("Nostr notifications are disabled")
 		}
+		log.Printf("notification send started: channel=nostr protocol=nip17 type=test")
 		if err := sender.Nostr(ctx, config, testMessage); err != nil {
+			log.Printf("notification send failed: channel=nostr protocol=nip17 type=test error=%v", err)
 			return fmt.Errorf("send Nostr test: %w", err)
 		}
+		log.Printf("notification send succeeded: channel=nostr protocol=nip17 type=test")
 	default:
 		return fmt.Errorf("unknown notification channel %q", channel)
 	}

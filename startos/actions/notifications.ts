@@ -7,6 +7,7 @@ import {
   uniqueSenderName,
   validateRecipientNpub,
 } from '../nostrIdentity'
+import { torSocksBridge } from '../utils'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
@@ -252,6 +253,7 @@ export const notifications = sdk.Action.withInput(
       testChannels.push('nostr')
     }
     if (testChannels.length > 0) {
+      const torSocks = await torSocksBridge(effects)
       const mounts = sdk.Mounts.of().mountVolume({
         volumeId: 'main',
         subpath: null,
@@ -266,7 +268,10 @@ export const notifications = sdk.Action.withInput(
         async (sub) => {
           for (const channel of testChannels) {
             await sub.execFail(['s-watcher', 'test-notification', channel], {
-              env: { SWATCHER_DATA: '/data' },
+              env: {
+                SWATCHER_DATA: '/data',
+                TOR_SOCKS_ADDR: torSocks ?? '',
+              },
               user: 'root',
             })
           }

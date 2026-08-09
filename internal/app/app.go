@@ -61,28 +61,36 @@ type WatchGroup struct {
 	IncludeChange  bool      `json:"includeChange,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	DiscoveryError string    `json:"discoveryError,omitempty"`
+	Bulk           bool      `json:"bulk,omitempty"`
+	Combined       bool      `json:"combined,omitempty"`
 	NotifyMode     string    `json:"notifyMode,omitempty"`
 	NotifyMinimum  uint64    `json:"notifyMinimum,omitempty"`
 	NotifyAfter    int       `json:"notifyAfter,omitempty"`
 }
 
 type Event struct {
-	WatchID           string    `json:"watchId"`
-	GroupID           string    `json:"groupId,omitempty"`
-	TxID              string    `json:"txid"`
-	Height            int64     `json:"height"`
-	Direction         string    `json:"direction"`
-	Received          uint64    `json:"received"`
-	Sent              uint64    `json:"sent"`
-	Net               int64     `json:"net"`
-	OPReturn          []string  `json:"opReturn,omitempty"`
-	Replaceable       bool      `json:"replaceable,omitempty"`
-	Runestone         bool      `json:"runestone,omitempty"`
-	Inscriptions      int       `json:"inscriptions,omitempty"`
-	ReceivedAddresses []string  `json:"receivedAddresses,omitempty"`
-	SeenAt            time.Time `json:"seenAt"`
-	TelegramSent      bool      `json:"telegramSent,omitempty"`
-	NostrSent         bool      `json:"nostrSent,omitempty"`
+	WatchID              string    `json:"watchId"`
+	GroupID              string    `json:"groupId,omitempty"`
+	TxID                 string    `json:"txid"`
+	Height               int64     `json:"height"`
+	Direction            string    `json:"direction"`
+	Received             uint64    `json:"received"`
+	Sent                 uint64    `json:"sent"`
+	Net                  int64     `json:"net"`
+	OPReturn             []string  `json:"opReturn,omitempty"`
+	Replaceable          bool      `json:"replaceable,omitempty"`
+	Runestone            bool      `json:"runestone,omitempty"`
+	Inscriptions         int       `json:"inscriptions,omitempty"`
+	ReceivedAddresses    []string  `json:"receivedAddresses,omitempty"`
+	SpentAddresses       []string  `json:"spentAddresses,omitempty"`
+	SourceAddresses      []string  `json:"sourceAddresses,omitempty"`
+	DestinationAddresses []string  `json:"destinationAddresses,omitempty"`
+	DetailsVersion       int       `json:"detailsVersion,omitempty"`
+	DetailsPending       bool      `json:"detailsPending,omitempty"`
+	Historical           bool      `json:"historical,omitempty"`
+	SeenAt               time.Time `json:"seenAt"`
+	TelegramSent         bool      `json:"telegramSent,omitempty"`
+	NostrSent            bool      `json:"nostrSent,omitempty"`
 }
 
 type state struct {
@@ -102,7 +110,10 @@ type state struct {
 }
 
 const defaultDiscoveryGap = 20
+const maxBulkAddresses = 10000
+const maxWatchFormBytes = 2 << 20
 const defaultTheme = "bitcoin-night"
+const currentEventDetailsVersion = 2
 
 var themes = map[string]bool{
 	"bitcoin-night": true,
@@ -162,12 +173,34 @@ type groupView struct {
 
 type eventView struct {
 	Event
-	DisplayAmount         string
-	DisplayTxID           string
-	ReuseCount            int
-	SmallDeposit          bool
-	CombinedGroups        int
-	SmallDepositThreshold uint64
+	DisplayAmount                string
+	DisplayReceived              string
+	DisplaySent                  string
+	DisplayNet                   string
+	DisplayTxID                  string
+	DisplayReceivedAddresses     []string
+	DisplaySpentAddresses        []string
+	DisplaySourceAddresses       []string
+	DisplayDestinationAddresses  []string
+	ReuseCount                   int
+	SmallDeposit                 bool
+	CombinedGroups               int
+	DisplaySmallDepositThreshold string
+}
+
+type transactionPageData struct {
+	Group       groupView
+	Events      []eventView
+	PrivacyMode bool
+	Theme       string
+	SortMode    string
+	Page        int
+	TotalPages  int
+	TotalEvents int
+	PreviousURL string
+	NextURL     string
+	MempoolURLs []string
+	CSPNonce    string
 }
 
 type pageData struct {
@@ -178,7 +211,30 @@ type pageData struct {
 	Theme            string
 	SortMode         string
 	GroupSuggestions []string
+	MempoolURLs      []string
 	CSPNonce         string
+}
+
+type addressLookupResponse struct {
+	Found   bool                 `json:"found"`
+	Matches []addressLookupMatch `json:"matches"`
+}
+
+type addressLookupMatch struct {
+	GroupID           string `json:"groupId"`
+	Name              string `json:"name"`
+	Group             string `json:"group"`
+	Path              string `json:"path,omitempty"`
+	AddressType       string `json:"addressType"`
+	SourceType        string `json:"sourceType"`
+	Balance           string `json:"balance"`
+	ScanStatus        string `json:"scanStatus"`
+	LastChecked       string `json:"lastChecked,omitempty"`
+	LastTransaction   string `json:"lastTransaction,omitempty"`
+	LastTransactionAt string `json:"lastTransactionAt,omitempty"`
+	KnownTransactions int    `json:"knownTransactions"`
+	Note              string `json:"note,omitempty"`
+	ScanError         string `json:"scanError,omitempty"`
 }
 
 var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9_]+(?: [a-z0-9_]+)*$`)
@@ -237,19 +293,27 @@ type App struct {
 	client           *electrum.Client
 	interval         time.Duration
 	tmpl             *template.Template
+	transactionsTmpl *template.Template
 	notifier         notify.Sender
+	mempoolURLs      []string
 	authPath         string
 	authMu           sync.Mutex
 	failedLogins     int
 	loginLockedUntil time.Time
 }
 
+type notificationBalance struct {
+	Confirmed   int64
+	Unconfirmed int64
+}
+
 func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}}
+	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}, mempoolURLs: parseMempoolURLs(os.Getenv("SWATCHER_MEMPOOL_URLS"))}
 	a.tmpl = template.Must(template.New("index").Funcs(template.FuncMap{"watchLabel": a.watchLabel}).Parse(indexHTML))
+	a.transactionsTmpl = template.Must(template.New("transactions").Parse(transactionsHTML))
 	if err := a.load(); err != nil {
 		return nil, err
 	}
@@ -267,13 +331,117 @@ func (a *App) Run(listen string) error {
 	mux.HandleFunc("GET /health", a.health)
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /", a.index)
+	protected.HandleFunc("POST /addresses/find", a.findAddress)
+	protected.HandleFunc("GET /groups/{id}/transactions", a.groupTransactions)
 	protected.HandleFunc("POST /watches", a.addWatch)
 	protected.HandleFunc("POST /groups/{id}/update", a.updateGroup)
 	protected.HandleFunc("POST /groups/{id}/delete", a.deleteGroup)
+	protected.HandleFunc("POST /groups/combine", a.combineGroups)
 	mux.Handle("/", a.requireAuth(protected))
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
 	return server.ListenAndServe()
+}
+
+func (a *App) findAddress(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		writeAddressLookupError(w, http.StatusBadRequest, "The address lookup could not be read.")
+		return
+	}
+	address := strings.TrimSpace(r.FormValue("address"))
+	if address == "" || len(address) > 128 || !utf8.ValidString(address) {
+		writeAddressLookupError(w, http.StatusBadRequest, "Enter one valid Bitcoin mainnet address.")
+		return
+	}
+	scriptHash, err := bitcoin.ScriptHash(address)
+	if err != nil {
+		writeAddressLookupError(w, http.StatusBadRequest, "Enter one valid Bitcoin mainnet address.")
+		return
+	}
+
+	a.mu.RLock()
+	groups := make(map[string]WatchGroup, len(a.state.Groups))
+	for _, group := range a.state.Groups {
+		groups[group.ID] = group
+	}
+	response := addressLookupResponse{Matches: []addressLookupMatch{}}
+	for _, watch := range a.state.Watches {
+		watchScriptHash := watch.ScriptHash
+		if watchScriptHash == "" {
+			watchScriptHash, _ = bitcoin.ScriptHash(watch.Address)
+		}
+		if watchScriptHash != scriptHash {
+			continue
+		}
+		groupID := watch.GroupID
+		if groupID == "" {
+			groupID = watch.ID
+		}
+		group, ok := groups[groupID]
+		if !ok {
+			group = WatchGroup{ID: groupID, Label: watch.Label, Category: "uncategorized", Source: watch.Address, ScriptType: "address", Count: 1}
+		}
+		category := group.Category
+		if category == "" {
+			category = "uncategorized"
+		}
+		_, addressType, _ := addressTypeDetails(watch.Address, "address")
+		balance := formatSignedBitcoinAmount(watch.Confirmed, false)
+		if watch.Unconfirmed != 0 {
+			balance += fmt.Sprintf(" (%s pending)", formatSignedBitcoinAmount(watch.Unconfirmed, true))
+		}
+		scanStatus := "Not initialized"
+		if watch.Initialized {
+			scanStatus = "Initialized"
+		}
+		match := addressLookupMatch{
+			GroupID: groupID, Name: group.Label, Group: category, Path: watch.Path,
+			AddressType: addressType, SourceType: addressLookupSourceType(group), Balance: balance,
+			ScanStatus: scanStatus, KnownTransactions: len(watch.KnownTx), Note: group.Notes, ScanError: watch.LastError,
+		}
+		if !watch.LastChecked.IsZero() {
+			match.LastChecked = watch.LastChecked.Format("2006-01-02 15:04 UTC")
+		}
+		if watch.LastTxID != "" {
+			match.LastTransaction = watch.LastTxID
+		}
+		if !watch.LastTxAt.IsZero() {
+			match.LastTransactionAt = watch.LastTxAt.Format("2006-01-02 15:04 UTC")
+		}
+		if a.state.PrivacyMode {
+			match.Balance = "Hidden by Privacy Mode"
+			match.LastTransaction = ""
+			match.Note = ""
+		}
+		response.Matches = append(response.Matches, match)
+	}
+	a.mu.RUnlock()
+	response.Found = len(response.Matches) > 0
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func writeAddressLookupError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func addressLookupSourceType(group WatchGroup) string {
+	switch {
+	case group.Combined:
+		return "Combined watch"
+	case group.Bulk:
+		return "Bulk address import"
+	case strings.Contains(group.Source, "("):
+		return "Output descriptor"
+	case isBareXpub(group.Source) || strings.HasPrefix(group.Source, "ypub") || strings.HasPrefix(group.Source, "zpub"):
+		return "Extended public key"
+	default:
+		return "Single address"
+	}
 }
 
 func (a *App) index(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +450,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
 		sortMode = "activity"
 	}
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, CSPNonce: cspNonce(r)}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, MempoolURLs: a.mempoolURLs, CSPNonce: cspNonce(r)}
 	suggestions := map[string]bool{}
 	for _, group := range a.state.Groups {
 		if watchMetadataPattern.MatchString(group.Category) {
@@ -315,7 +483,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			view.ReuseCount = 0
 		}
 		view.SmallDeposit = smallEnabled && event.Received > 0 && event.Received < smallThreshold
-		view.SmallDepositThreshold = smallThreshold
+		view.DisplaySmallDepositThreshold = formatBitcoinAmount(smallThreshold)
 		if combinedEnabled {
 			view.CombinedGroups = len(txGroups[event.TxID])
 			if view.CombinedGroups < 2 {
@@ -326,8 +494,13 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			view.DisplayTxID = maskIdentifier(event.TxID)
 			view.DisplayAmount = legacyMask(8)
 		}
-		data.Events = append(data.Events, view)
+		if !event.Historical && !event.DetailsPending {
+			data.Events = append(data.Events, view)
+		}
 		for i := range data.Groups {
+			if event.DetailsPending {
+				continue
+			}
 			if data.Groups[i].ID == event.GroupID && event.SeenAt.After(data.Groups[i].LastActivity) {
 				data.Groups[i].LastActivity = event.SeenAt
 				data.Groups[i].ActivitySignal = movementSignal(event)
@@ -341,12 +514,14 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 		data.Groups[i].DisplaySource = data.Groups[i].Source
 		data.Groups[i].DisplayLastTxID = data.Groups[i].LastTxID
 		data.Groups[i].LastTxAgo = relativeTime(data.Groups[i].LastTxAt, time.Now())
-		data.Groups[i].DisplayBalance = fmt.Sprintf("%d sat", data.Groups[i].Confirmed)
+		data.Groups[i].DisplayBalance = formatSignedBitcoinAmount(data.Groups[i].Confirmed, false)
 		if data.Groups[i].Unconfirmed != 0 {
-			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%d pending)", data.Groups[i].Unconfirmed)
+			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%s pending)", formatSignedBitcoinAmount(data.Groups[i].Unconfirmed, true))
 		}
 		if a.state.PrivacyMode {
-			data.Groups[i].DisplaySource = maskIdentifier(data.Groups[i].Source)
+			if !data.Groups[i].Bulk && !data.Groups[i].Combined {
+				data.Groups[i].DisplaySource = maskIdentifier(data.Groups[i].Source)
+			}
 			data.Groups[i].DisplayLastTxID = maskIdentifier(data.Groups[i].LastTxID)
 			data.Groups[i].DisplayBalance = legacyMask(8)
 		}
@@ -365,6 +540,216 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if err := a.tmpl.Execute(w, data); err != nil {
 		log.Printf("render: %v", err)
 	}
+}
+
+const transactionsPerPage = 100
+
+func (a *App) groupTransactions(w http.ResponseWriter, r *http.Request) {
+	groupID := r.PathValue("id")
+	sortMode := transactionSortMode(r.URL.Query().Get("sort"))
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	a.mu.RLock()
+	groups := a.groupViewsLocked()
+	groupIndex := -1
+	for index := range groups {
+		if groups[index].ID == groupID {
+			groupIndex = index
+			break
+		}
+	}
+	if groupIndex < 0 {
+		a.mu.RUnlock()
+		http.NotFound(w, r)
+		return
+	}
+	group := groups[groupIndex]
+	privacyMode := a.state.PrivacyMode
+	events := a.transactionEventViewsLocked(groupID)
+	theme := selectedTheme(a.state.Theme)
+	mempoolURLs := append([]string(nil), a.mempoolURLs...)
+	a.mu.RUnlock()
+
+	sortTransactionEvents(events, sortMode)
+	totalEvents := len(events)
+	totalPages := (totalEvents + transactionsPerPage - 1) / transactionsPerPage
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * transactionsPerPage
+	end := start + transactionsPerPage
+	if end > totalEvents {
+		end = totalEvents
+	}
+	events = events[start:end]
+
+	group.DisplayBalance = formatSignedBitcoinAmount(group.Confirmed, false)
+	if group.Unconfirmed != 0 {
+		group.DisplayBalance += fmt.Sprintf(" (%s pending)", formatSignedBitcoinAmount(group.Unconfirmed, true))
+	}
+	if privacyMode {
+		group.DisplayBalance = legacyMask(8)
+	}
+	data := transactionPageData{
+		Group:       group,
+		Events:      events,
+		PrivacyMode: privacyMode,
+		Theme:       theme,
+		SortMode:    sortMode,
+		Page:        page,
+		TotalPages:  totalPages,
+		TotalEvents: totalEvents,
+		MempoolURLs: mempoolURLs,
+		CSPNonce:    cspNonce(r),
+	}
+	baseURL := fmt.Sprintf("/groups/%s/transactions?sort=%s&page=", url.PathEscape(groupID), url.QueryEscape(sortMode))
+	if page > 1 {
+		data.PreviousURL = baseURL + strconv.Itoa(page-1)
+	}
+	if page < totalPages {
+		data.NextURL = baseURL + strconv.Itoa(page+1)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.transactionsTmpl.Execute(w, data); err != nil {
+		log.Printf("render transaction history: %v", err)
+	}
+}
+
+func (a *App) transactionEventViewsLocked(groupID string) []eventView {
+	reuseEnabled, smallEnabled, combinedEnabled, smallThreshold := privacyIndicatorSettings(a.state)
+	receiptCounts := map[string]int{}
+	txGroups := map[string]map[string]bool{}
+	for _, event := range a.state.Events {
+		if txGroups[event.TxID] == nil {
+			txGroups[event.TxID] = map[string]bool{}
+		}
+		txGroups[event.TxID][effectiveEventGroupID(event)] = true
+	}
+	views := make([]eventView, 0)
+	for _, event := range a.state.Events {
+		reuseCount := 0
+		for _, address := range event.ReceivedAddresses {
+			receiptCounts[address]++
+			if receiptCounts[address] > reuseCount {
+				reuseCount = receiptCounts[address]
+			}
+		}
+		if effectiveEventGroupID(event) != groupID {
+			continue
+		}
+		view := eventView{
+			Event:                        event,
+			DisplayAmount:                eventAmount(event),
+			DisplayReceived:              formatBitcoinAmount(event.Received),
+			DisplaySent:                  formatBitcoinAmount(event.Sent),
+			DisplayNet:                   formatSignedBitcoinAmount(event.Net, true),
+			DisplayTxID:                  event.TxID,
+			DisplayReceivedAddresses:     append([]string(nil), event.ReceivedAddresses...),
+			DisplaySpentAddresses:        append([]string(nil), event.SpentAddresses...),
+			DisplaySourceAddresses:       append([]string(nil), event.SourceAddresses...),
+			DisplayDestinationAddresses:  append([]string(nil), event.DestinationAddresses...),
+			ReuseCount:                   reuseCount,
+			SmallDeposit:                 smallEnabled && event.Received > 0 && event.Received < smallThreshold,
+			DisplaySmallDepositThreshold: formatBitcoinAmount(smallThreshold),
+		}
+		if !reuseEnabled || view.ReuseCount < 2 {
+			view.ReuseCount = 0
+		}
+		if combinedEnabled {
+			view.CombinedGroups = len(txGroups[event.TxID])
+			if view.CombinedGroups < 2 {
+				view.CombinedGroups = 0
+			}
+		}
+		if a.state.PrivacyMode {
+			view.DisplayAmount = legacyMask(8)
+			view.DisplayReceived = legacyMask(8)
+			view.DisplaySent = legacyMask(8)
+			view.DisplayNet = legacyMask(8)
+			view.DisplayTxID = maskIdentifier(event.TxID)
+			view.DisplayReceivedAddresses = maskIdentifiers(event.ReceivedAddresses)
+			view.DisplaySpentAddresses = maskIdentifiers(event.SpentAddresses)
+			view.DisplaySourceAddresses = maskIdentifiers(event.SourceAddresses)
+			view.DisplayDestinationAddresses = maskIdentifiers(event.DestinationAddresses)
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func effectiveEventGroupID(event Event) string {
+	if event.GroupID != "" {
+		return event.GroupID
+	}
+	return event.WatchID
+}
+
+func transactionSortMode(value string) string {
+	switch value {
+	case "oldest", "largest", "smallest", "incoming", "outgoing", "mempool", "confirmed":
+		return value
+	default:
+		return "newest"
+	}
+}
+
+func sortTransactionEvents(events []eventView, mode string) {
+	sort.SliceStable(events, func(i, j int) bool {
+		left, right := events[i].Event, events[j].Event
+		switch mode {
+		case "oldest":
+			if !left.SeenAt.Equal(right.SeenAt) {
+				return left.SeenAt.Before(right.SeenAt)
+			}
+		case "largest", "smallest":
+			leftSize, rightSize := eventValueSize(left), eventValueSize(right)
+			if leftSize != rightSize {
+				if mode == "largest" {
+					return leftSize > rightSize
+				}
+				return leftSize < rightSize
+			}
+		case "incoming", "outgoing":
+			leftRank, rightRank := transactionDirectionRank(left.Direction, mode), transactionDirectionRank(right.Direction, mode)
+			if leftRank != rightRank {
+				return leftRank < rightRank
+			}
+		case "mempool", "confirmed":
+			leftPreferred := (left.Height == 0) == (mode == "mempool")
+			rightPreferred := (right.Height == 0) == (mode == "mempool")
+			if leftPreferred != rightPreferred {
+				return leftPreferred
+			}
+		}
+		if !left.SeenAt.Equal(right.SeenAt) {
+			return left.SeenAt.After(right.SeenAt)
+		}
+		return left.TxID < right.TxID
+	})
+}
+
+func eventValueSize(event Event) uint64 {
+	if event.Received > event.Sent {
+		return event.Received
+	}
+	return event.Sent
+}
+
+func transactionDirectionRank(direction, preferred string) int {
+	if (preferred == "incoming" && direction == "received") || (preferred == "outgoing" && direction == "sent") {
+		return 0
+	}
+	if direction == "self-transfer" {
+		return 1
+	}
+	return 2
 }
 
 func (a *App) requireAuth(next http.Handler) http.Handler {
@@ -445,7 +830,19 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxWatchFormBytes)
+	var parseErr error
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data;") {
+		parseErr = r.ParseMultipartForm(maxWatchFormBytes)
+	} else {
+		parseErr = r.ParseForm()
+	}
+	if parseErr != nil {
+		writeFormError(w, r, http.StatusBadRequest, "The watch form is too large or could not be read.")
+		return
+	}
 	source := strings.TrimSpace(r.FormValue("source"))
+	bulkSource := strings.TrimSpace(r.FormValue("bulk_sources"))
 	label := normalizeWatchMetadata(r.FormValue("label"))
 	category := normalizeWatchMetadata(r.FormValue("category"))
 	notes, noteErr := validateWatchNote(r.FormValue("notes"))
@@ -471,8 +868,23 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	newWatches := []Watch{}
 	scriptType := strings.TrimSpace(r.FormValue("script_type"))
 	count := 1
+	bulk := bulkSource != ""
 	includeChange := r.FormValue("include_change") == "on"
-	if scriptHash, err := bitcoin.ScriptHash(source); err == nil {
+	if bulk {
+		addresses, parseErr := parseBulkAddresses(bulkSource)
+		if parseErr != nil {
+			writeFormError(w, r, http.StatusBadRequest, parseErr.Error())
+			return
+		}
+		count = len(addresses)
+		source = "bulk-address-list"
+		scriptType = "bulk"
+		includeChange = false
+		for _, address := range addresses {
+			scriptHash, _ := bitcoin.ScriptHash(address)
+			newWatches = append(newWatches, Watch{ID: randomID(), GroupID: groupID, Label: label, Address: address, ScriptHash: scriptHash})
+		}
+	} else if scriptHash, err := bitcoin.ScriptHash(source); err == nil {
 		newWatches = append(newWatches, Watch{ID: randomID(), GroupID: groupID, Label: label, Address: source, ScriptHash: scriptHash})
 		scriptType = "address"
 	} else {
@@ -499,21 +911,23 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, group := range a.state.Groups {
-		if group.Source == source && group.ScriptType == scriptType {
+		if !bulk && !group.Bulk && group.Source == source && group.ScriptType == scriptType {
 			writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This wallet or address is already being watched as %q in %q.", group.Label, group.Category))
 			return
 		}
 	}
 	overlaps := map[string]int{}
+	owners := make(map[string]string, len(a.state.Watches))
 	for _, existing := range a.state.Watches {
-		for _, candidate := range newWatches {
-			if existing.Address == candidate.Address {
-				existingGroupID := existing.GroupID
-				if existingGroupID == "" {
-					existingGroupID = existing.ID
-				}
-				overlaps[existingGroupID]++
-			}
+		existingGroupID := existing.GroupID
+		if existingGroupID == "" {
+			existingGroupID = existing.ID
+		}
+		owners[watchIdentityKey(existing)] = existingGroupID
+	}
+	for _, candidate := range newWatches {
+		if existingGroupID := owners[watchIdentityKey(candidate)]; existingGroupID != "" {
+			overlaps[existingGroupID]++
 		}
 	}
 	if len(overlaps) > 0 {
@@ -533,11 +947,11 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This wallet overlaps with %q: %d of %d derived addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
+		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This watch overlaps with %q: %d of %d addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
 		return
 	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
-	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC()})
+	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC(), Bulk: bulk})
 	if err := a.saveLocked(); err != nil {
 		http.Error(w, "could not save watch", http.StatusInternalServerError)
 		return
@@ -549,6 +963,36 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func parseBulkAddresses(value string) ([]string, error) {
+	parts := strings.FieldsFunc(value, func(character rune) bool {
+		return unicode.IsSpace(character) || character == ',' || character == ';'
+	})
+	if len(parts) < 2 {
+		return nil, errors.New("Bulk import requires at least two Bitcoin mainnet addresses")
+	}
+	addresses := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for index, address := range parts {
+		if strings.HasPrefix(strings.ToLower(address), "bc1") {
+			address = strings.ToLower(address)
+		}
+		if _, err := bitcoin.ScriptHash(address); err != nil {
+			return nil, fmt.Errorf("Entry %d is not a valid Bitcoin mainnet address; nothing was added", index+1)
+		}
+		if !seen[address] {
+			seen[address] = true
+			addresses = append(addresses, address)
+			if len(addresses) > maxBulkAddresses {
+				return nil, fmt.Errorf("Bulk import supports at most %d unique addresses at once", maxBulkAddresses)
+			}
+		}
+	}
+	if len(addresses) < 2 {
+		return nil, errors.New("Bulk import requires at least two unique Bitcoin mainnet addresses")
+	}
+	return addresses, nil
 }
 
 func writeFormError(w http.ResponseWriter, r *http.Request, status int, message string) {
@@ -800,6 +1244,270 @@ func (a *App) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := r.ParseForm(); err != nil {
+		writeFormError(w, r, http.StatusBadRequest, "The consolidation request could not be read.")
+		return
+	}
+	label := normalizeWatchMetadata(r.FormValue("label"))
+	category := normalizeWatchMetadata(r.FormValue("category"))
+	if label == "" || len(label) > 80 || !watchMetadataPattern.MatchString(label) || category == "" || len(category) > 60 || !watchMetadataPattern.MatchString(category) {
+		writeFormError(w, r, http.StatusBadRequest, "Name and group may contain only letters, numbers, spaces, and underscores.")
+		return
+	}
+	notes, err := validateWatchNote(r.FormValue("notes"))
+	if err != nil {
+		writeFormError(w, r, http.StatusBadRequest, err.Error()+". Never enter a private key or seed phrase.")
+		return
+	}
+	selectedIDs := make([]string, 0, len(r.Form["group_ids"]))
+	selected := make(map[string]bool, len(r.Form["group_ids"]))
+	for _, id := range r.Form["group_ids"] {
+		id = strings.TrimSpace(id)
+		if id != "" && !selected[id] {
+			selected[id] = true
+			selectedIDs = append(selectedIDs, id)
+		}
+	}
+	if len(selectedIDs) < 2 || len(selectedIDs) > 100 {
+		writeFormError(w, r, http.StatusBadRequest, "Select between 2 and 100 watches to combine.")
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	selectedGroups := make([]WatchGroup, 0, len(selectedIDs))
+	for _, id := range selectedIDs {
+		found := false
+		for _, group := range a.state.Groups {
+			if group.ID == id {
+				selectedGroups = append(selectedGroups, group)
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeFormError(w, r, http.StatusNotFound, "One of the selected watches no longer exists. Reload the page and try again.")
+			return
+		}
+	}
+	addressCounts := make(map[string]int, len(selected))
+	selectedWatchIDs := make(map[string]bool)
+	for _, watch := range a.state.Watches {
+		if selected[watch.GroupID] {
+			addressCounts[watch.GroupID]++
+			selectedWatchIDs[watch.ID] = true
+		}
+	}
+	rawAddressCount := 0
+	hasMultiple := false
+	for _, id := range selectedIDs {
+		rawAddressCount += addressCounts[id]
+		if addressCounts[id] > 1 {
+			hasMultiple = true
+		}
+	}
+	if rawAddressCount < 2 {
+		writeFormError(w, r, http.StatusBadRequest, "The selected watches do not contain enough addresses to combine.")
+		return
+	}
+	if rawAddressCount > maxBulkAddresses {
+		writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("A combined watch may contain at most %d addresses.", maxBulkAddresses))
+		return
+	}
+	if hasMultiple && r.FormValue("confirm_multi") != "on" {
+		writeFormError(w, r, http.StatusConflict, "Confirm that the selected multi-address groups should be included.")
+		return
+	}
+	if notes == "" {
+		notes = combinedNotes(selectedGroups)
+	}
+
+	newID := randomID()
+	mergedWatches, canonicalWatchID := mergeSelectedWatches(a.state.Watches, selected, newID, label)
+	if canonicalWatchID == "" {
+		writeFormError(w, r, http.StatusBadRequest, "The selected watches do not contain an address to combine.")
+		return
+	}
+	a.state.Watches = mergedWatches
+	totalAddresses := 0
+	for _, watch := range a.state.Watches {
+		if watch.GroupID == newID {
+			totalAddresses++
+		}
+	}
+	notifyMode, notifyMinimum, notifyAfter := inheritedNotificationRule(selectedGroups)
+	keptGroups := a.state.Groups[:0]
+	for _, group := range a.state.Groups {
+		if !selected[group.ID] {
+			keptGroups = append(keptGroups, group)
+		}
+	}
+	a.state.Groups = append(keptGroups, WatchGroup{ID: newID, Label: label, Category: category, Notes: notes, Source: "combined-address-list", ScriptType: "collection", Count: totalAddresses, CreatedAt: time.Now().UTC(), Combined: true, NotifyMode: notifyMode, NotifyMinimum: notifyMinimum, NotifyAfter: notifyAfter})
+	a.state.Events = consolidateEvents(a.state.Events, selected, selectedWatchIDs, newID, canonicalWatchID)
+	if err := a.saveLocked(); err != nil {
+		writeFormError(w, r, http.StatusInternalServerError, "The selected watches could not be combined.")
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": newID})
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func mergeSelectedWatches(watches []Watch, selectedGroups map[string]bool, newGroupID, label string) ([]Watch, string) {
+	result := make([]Watch, 0, len(watches))
+	indexes := make(map[string]int)
+	canonicalWatchID := ""
+	for _, watch := range watches {
+		if !selectedGroups[watch.GroupID] {
+			result = append(result, watch)
+			continue
+		}
+		watch.GroupID = newGroupID
+		watch.Label = label
+		if watch.Path != "" {
+			watch.Label += " " + watch.Path
+		}
+		key := watchIdentityKey(watch)
+		if index, exists := indexes[key]; exists {
+			mergeWatchState(&result[index], watch)
+			continue
+		}
+		indexes[key] = len(result)
+		result = append(result, watch)
+		if canonicalWatchID == "" {
+			canonicalWatchID = watch.ID
+		}
+	}
+	return result, canonicalWatchID
+}
+
+func watchIdentityKey(watch Watch) string {
+	if watch.ScriptHash != "" {
+		return "script:" + watch.ScriptHash
+	}
+	if scriptHash, err := bitcoin.ScriptHash(watch.Address); err == nil {
+		return "script:" + scriptHash
+	}
+	return "address:" + strings.ToLower(strings.TrimSpace(watch.Address))
+}
+
+func mergeWatchState(target *Watch, duplicate Watch) {
+	target.KnownTx = appendUniqueStrings(target.KnownTx, duplicate.KnownTx...)
+	preferDuplicate := duplicate.LastChecked.After(target.LastChecked) || (!target.Initialized && duplicate.Initialized)
+	if preferDuplicate {
+		target.Confirmed = duplicate.Confirmed
+		target.Unconfirmed = duplicate.Unconfirmed
+		target.LastChecked = duplicate.LastChecked
+		target.LastError = duplicate.LastError
+	}
+	if duplicate.LastTxAt.After(target.LastTxAt) || (target.LastTxID == "" && duplicate.LastTxID != "") {
+		target.LastTxID = duplicate.LastTxID
+		target.LastTxHeight = duplicate.LastTxHeight
+		target.LastTxAt = duplicate.LastTxAt
+	}
+	target.Initialized = target.Initialized || duplicate.Initialized
+}
+
+func combinedNotes(groups []WatchGroup) string {
+	var lines []string
+	for _, group := range groups {
+		if strings.TrimSpace(group.Notes) == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("[%s / %s] %s", group.Category, group.Label, group.Notes))
+	}
+	runes := []rune(strings.Join(lines, "\n"))
+	if len(runes) > 500 {
+		runes = runes[:497]
+		runes = append(runes, '.', '.', '.')
+	}
+	return string(runes)
+}
+
+func inheritedNotificationRule(groups []WatchGroup) (string, uint64, int) {
+	if len(groups) == 0 {
+		return "off", 0, 0
+	}
+	mode := groups[0].NotifyMode
+	if mode == "" {
+		mode = "all"
+	}
+	minimum, after := groups[0].NotifyMinimum, groups[0].NotifyAfter
+	for _, group := range groups[1:] {
+		candidateMode := group.NotifyMode
+		if candidateMode == "" {
+			candidateMode = "all"
+		}
+		if candidateMode != mode || group.NotifyMinimum != minimum || group.NotifyAfter != after {
+			return "off", 0, 0
+		}
+	}
+	return mode, minimum, after
+}
+
+func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[string]bool, newGroupID, canonicalWatchID string) []Event {
+	result := make([]Event, 0, len(events))
+	indexes := make(map[string]int)
+	for _, event := range events {
+		if !selectedGroups[event.GroupID] && !selectedWatchIDs[event.WatchID] {
+			result = append(result, event)
+			continue
+		}
+		event.GroupID = newGroupID
+		event.WatchID = canonicalWatchID
+		event.TelegramSent, event.NostrSent = true, true
+		if index, exists := indexes[event.TxID]; exists {
+			merged := &result[index]
+			if event.Height > merged.Height {
+				merged.Height = event.Height
+			}
+			if merged.SeenAt.IsZero() || (!event.SeenAt.IsZero() && event.SeenAt.Before(merged.SeenAt)) {
+				merged.SeenAt = event.SeenAt
+			}
+			merged.Historical = merged.Historical && event.Historical
+			continue
+		}
+		event.Direction = "activity"
+		event.Received, event.Sent, event.Net = 0, 0, 0
+		event.OPReturn = nil
+		event.Replaceable, event.Runestone, event.Inscriptions = false, false, 0
+		event.ReceivedAddresses, event.SpentAddresses, event.SourceAddresses, event.DestinationAddresses = nil, nil, nil, nil
+		event.DetailsVersion = 0
+		event.DetailsPending = true
+		indexes[event.TxID] = len(result)
+		result = append(result, event)
+	}
+	return result
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := make(map[string]bool, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if !seen[value] {
+			seen[value] = true
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func maskIdentifiers(values []string) []string {
+	masked := make([]string, 0, len(values))
+	for _, value := range values {
+		masked = append(masked, maskIdentifier(value))
+	}
+	return masked
+}
+
 func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
@@ -812,20 +1520,38 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) pollLoop() {
-	a.poll()
-	ticker := time.NewTicker(a.interval)
-	defer ticker.Stop()
-	for range ticker.C {
+	for {
 		a.poll()
+		time.Sleep(a.interval)
 	}
+}
+
+type pollResult struct {
+	watch        Watch
+	groupID      string
+	snapshot     electrum.Snapshot
+	effects      map[string]electrum.Effect
+	eventTimes   map[string]time.Time
+	notifyNew    map[string]bool
+	lastTxID     string
+	lastTxHeight int64
+	lastTxAt     time.Time
+	checkedAt    time.Time
+	err          error
 }
 
 func (a *App) poll() {
 	a.mu.RLock()
 	watches := append([]Watch(nil), a.state.Watches...)
+	eventVersions := make(map[string]int, len(a.state.Events))
+	for _, event := range a.state.Events {
+		eventVersions[effectiveEventGroupID(event)+"\x00"+event.TxID] = event.DetailsVersion
+	}
 	a.mu.RUnlock()
 	groupScripts := make(map[string][][]byte)
 	groupScriptAddresses := make(map[string]map[string]string)
+	groupKnown := make(map[string]map[string]bool)
+	groupInitialized := make(map[string]bool)
 	for _, watch := range watches {
 		groupID := watch.GroupID
 		if groupID == "" {
@@ -839,124 +1565,116 @@ func (a *App) poll() {
 			}
 			groupScriptAddresses[groupID][string(script)] = watch.Address
 		}
+		if groupKnown[groupID] == nil {
+			groupKnown[groupID] = map[string]bool{}
+		}
+		for _, txID := range watch.KnownTx {
+			groupKnown[groupID][txID] = true
+		}
+		groupInitialized[groupID] = groupInitialized[groupID] || watch.Initialized
+	}
+	workerCount := 8
+	if len(watches) < workerCount {
+		workerCount = len(watches)
+	}
+	jobs := make(chan Watch)
+	results := make(chan pollResult, len(watches))
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			for watch := range jobs {
+				results <- a.fetchWatch(watch, groupScripts, eventVersions, groupKnown, groupInitialized)
+			}
+		}()
 	}
 	for _, watch := range watches {
-		groupID := watch.GroupID
-		if groupID == "" {
-			groupID = watch.ID
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		snapshot, err := a.client.Snapshot(ctx, watch.ScriptHash)
-		lastTxID, lastTxHeight, lastTxAt := watch.LastTxID, watch.LastTxHeight, watch.LastTxAt
-		if err == nil {
-			if latest, ok := latestHistory(snapshot.History); ok {
-				lastTxID, lastTxHeight = latest.TxHash, latest.Height
-				if latest.TxHash != watch.LastTxID || latest.Height != watch.LastTxHeight || watch.LastTxAt.IsZero() {
-					if latest.Height > 0 {
-						if blockTime, timeErr := a.client.BlockTime(ctx, latest.Height); timeErr == nil {
-							lastTxAt = blockTime
-						} else {
-							lastTxAt = time.Time{}
-							log.Printf("latest transaction time %s: %v", watch.Label, timeErr)
-						}
-					} else {
-						lastTxAt = time.Now().UTC()
-					}
-				}
-			} else {
-				lastTxID, lastTxHeight, lastTxAt = "", 0, time.Time{}
-			}
-		}
-		effects := make(map[string]electrum.Effect)
-		if err == nil && watch.Initialized {
-			known := make(map[string]bool, len(watch.KnownTx))
-			for _, txID := range watch.KnownTx {
-				known[txID] = true
-			}
-			for _, item := range snapshot.History {
-				if err != nil || known[item.TxHash] {
-					continue
-				}
-				effect, effectErr := a.client.TransactionEffect(ctx, item.TxHash, groupScripts[groupID])
-				if effectErr != nil {
-					err = effectErr
-					break
-				}
-				effects[item.TxHash] = effect
-			}
-		}
-		cancel()
-		a.mu.Lock()
-		for i := range a.state.Watches {
-			current := &a.state.Watches[i]
-			if current.ID != watch.ID {
-				continue
-			}
-			current.LastChecked = time.Now().UTC()
-			if err != nil {
-				current.LastError = err.Error()
-				log.Printf("poll %s: %v", watch.Label, err)
-				break
-			}
-			known := make(map[string]bool, len(current.KnownTx))
-			for _, txid := range current.KnownTx {
-				known[txid] = true
-			}
-			for _, item := range snapshot.History {
-				if current.Initialized && !known[item.TxHash] {
-					if !a.eventExistsLocked(groupID, item.TxHash) {
-						effect := effects[item.TxHash]
-						receivedAddresses := make([]string, 0, len(effect.ReceivedScripts))
-						for _, script := range effect.ReceivedScripts {
-							if address := groupScriptAddresses[groupID][script]; address != "" {
-								receivedAddresses = append(receivedAddresses, address)
-							}
-						}
-						a.state.Events = append(a.state.Events, Event{
-							WatchID:           current.ID,
-							GroupID:           groupID,
-							TxID:              item.TxHash,
-							Height:            item.Height,
-							Direction:         direction(effect),
-							Received:          effect.Received,
-							Sent:              effect.Sent,
-							Net:               int64(effect.Received) - int64(effect.Sent),
-							OPReturn:          effect.OPReturn,
-							Replaceable:       effect.Replaceable,
-							Runestone:         effect.Runestone,
-							Inscriptions:      effect.Inscriptions,
-							ReceivedAddresses: receivedAddresses,
-							SeenAt:            time.Now().UTC(),
-						})
-					}
-				}
-				if !known[item.TxHash] {
-					current.KnownTx = append(current.KnownTx, item.TxHash)
-					known[item.TxHash] = true
-				}
-			}
-			heights := make(map[string]int64, len(snapshot.History))
-			for _, item := range snapshot.History {
-				heights[item.TxHash] = item.Height
-			}
-			for i := range a.state.Events {
-				if a.state.Events[i].WatchID == current.ID || (a.state.Events[i].GroupID != "" && a.state.Events[i].GroupID == groupID) {
-					if height, ok := heights[a.state.Events[i].TxID]; ok {
-						a.state.Events[i].Height = height
-					}
-				}
-			}
-			current.Confirmed, current.Unconfirmed = snapshot.Balance.Confirmed, snapshot.Balance.Unconfirmed
-			current.LastTxID, current.LastTxHeight, current.LastTxAt = lastTxID, lastTxHeight, lastTxAt
-			current.Initialized, current.LastError = true, ""
-			break
-		}
-		if saveErr := a.saveLocked(); saveErr != nil {
-			log.Printf("save: %v", saveErr)
-		}
-		a.mu.Unlock()
+		jobs <- watch
 	}
+	close(jobs)
+	pollResults := make([]pollResult, 0, len(watches))
+	for range watches {
+		pollResults = append(pollResults, <-results)
+	}
+
 	a.mu.Lock()
+	watchIndexes := make(map[string]int, len(a.state.Watches))
+	for index := range a.state.Watches {
+		watchIndexes[a.state.Watches[index].ID] = index
+	}
+	for _, result := range pollResults {
+		i, exists := watchIndexes[result.watch.ID]
+		if !exists {
+			continue
+		}
+		current := &a.state.Watches[i]
+		current.LastChecked = result.checkedAt
+		if result.err != nil {
+			current.LastError = result.err.Error()
+			log.Printf("poll %s: %v", result.watch.Label, result.err)
+			continue
+		}
+		known := make(map[string]bool, len(current.KnownTx))
+		for _, txid := range current.KnownTx {
+			known[txid] = true
+		}
+		for _, item := range result.snapshot.History {
+			effect, hasEffect := result.effects[item.TxHash]
+			seenAt := result.eventTimes[item.TxHash]
+			if seenAt.IsZero() {
+				seenAt = result.checkedAt
+			}
+			eventIndex := a.eventIndexLocked(result.groupID, item.TxHash)
+			if eventIndex < 0 {
+				historical := !result.notifyNew[item.TxHash]
+				a.state.Events = append(a.state.Events, Event{
+					WatchID: current.ID, GroupID: result.groupID, TxID: item.TxHash, Height: item.Height,
+					Direction: "activity", DetailsPending: true, Historical: historical, SeenAt: seenAt,
+					TelegramSent: historical, NostrSent: historical,
+				})
+				eventIndex = len(a.state.Events) - 1
+			}
+			event := &a.state.Events[eventIndex]
+			event.Height = item.Height
+			if hasEffect {
+				receivedAddresses := addressesForScripts(effect.ReceivedScripts, groupScriptAddresses[result.groupID])
+				spentAddresses := addressesForScripts(effect.SpentScripts, groupScriptAddresses[result.groupID])
+				event.Direction = direction(effect)
+				event.Received = effect.Received
+				event.Sent = effect.Sent
+				event.Net = int64(effect.Received) - int64(effect.Sent)
+				event.OPReturn = effect.OPReturn
+				event.Replaceable = effect.Replaceable
+				event.Runestone = effect.Runestone
+				event.Inscriptions = effect.Inscriptions
+				event.ReceivedAddresses = receivedAddresses
+				event.SpentAddresses = spentAddresses
+				event.SourceAddresses = effect.SourceAddresses
+				event.DestinationAddresses = effect.DestinationAddresses
+				event.DetailsVersion = currentEventDetailsVersion
+				event.DetailsPending = false
+				if !seenAt.IsZero() {
+					event.SeenAt = seenAt
+				}
+			}
+			if !known[item.TxHash] {
+				current.KnownTx = append(current.KnownTx, item.TxHash)
+				known[item.TxHash] = true
+			}
+		}
+		heights := make(map[string]int64, len(result.snapshot.History))
+		for _, item := range result.snapshot.History {
+			heights[item.TxHash] = item.Height
+		}
+		for i := range a.state.Events {
+			if a.state.Events[i].WatchID == current.ID || (a.state.Events[i].GroupID != "" && a.state.Events[i].GroupID == result.groupID) {
+				if height, ok := heights[a.state.Events[i].TxID]; ok {
+					a.state.Events[i].Height = height
+				}
+			}
+		}
+		current.Confirmed, current.Unconfirmed = result.snapshot.Balance.Confirmed, result.snapshot.Balance.Unconfirmed
+		current.LastTxID, current.LastTxHeight, current.LastTxAt = result.lastTxID, result.lastTxHeight, result.lastTxAt
+		current.Initialized, current.LastError = true, ""
+	}
 	if err := a.expandDiscoveryLocked(); err != nil {
 		log.Printf("smart discovery: %v", err)
 	}
@@ -965,6 +1683,74 @@ func (a *App) poll() {
 	}
 	a.mu.Unlock()
 	a.deliverPending()
+}
+
+func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVersions map[string]int, groupKnown map[string]map[string]bool, groupInitialized map[string]bool) pollResult {
+	groupID := watch.GroupID
+	if groupID == "" {
+		groupID = watch.ID
+	}
+	result := pollResult{watch: watch, groupID: groupID, effects: make(map[string]electrum.Effect), eventTimes: make(map[string]time.Time), notifyNew: make(map[string]bool), lastTxID: watch.LastTxID, lastTxHeight: watch.LastTxHeight, lastTxAt: watch.LastTxAt, checkedAt: time.Now().UTC()}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	result.snapshot, result.err = a.client.Snapshot(ctx, watch.ScriptHash)
+	if result.err != nil {
+		return result
+	}
+	if latest, ok := latestHistory(result.snapshot.History); ok {
+		result.lastTxID, result.lastTxHeight = latest.TxHash, latest.Height
+		if latest.TxHash != watch.LastTxID || latest.Height != watch.LastTxHeight || watch.LastTxAt.IsZero() {
+			if latest.Height > 0 {
+				if blockTime, err := a.client.BlockTime(ctx, latest.Height); err == nil {
+					result.lastTxAt = blockTime
+				} else {
+					result.lastTxAt = time.Time{}
+					log.Printf("latest transaction time %s: %v", watch.Label, err)
+				}
+			} else {
+				result.lastTxAt = result.checkedAt
+			}
+		}
+	} else {
+		result.lastTxID, result.lastTxHeight, result.lastTxAt = "", 0, time.Time{}
+	}
+	for _, item := range result.snapshot.History {
+		key := groupID + "\x00" + item.TxHash
+		if eventVersions[key] >= currentEventDetailsVersion {
+			continue
+		}
+		result.notifyNew[item.TxHash] = shouldNotifyHistoryEvent(groupInitialized[groupID], groupKnown[groupID][item.TxHash])
+		if item.Height > 0 {
+			if blockTime, err := a.client.BlockTime(ctx, item.Height); err == nil {
+				result.eventTimes[item.TxHash] = blockTime
+			} else {
+				log.Printf("transaction time %s: %v", item.TxHash, err)
+			}
+		} else {
+			result.eventTimes[item.TxHash] = result.checkedAt
+		}
+		effect, err := a.client.TransactionEffect(ctx, item.TxHash, groupScripts[groupID])
+		if err != nil {
+			log.Printf("transaction details %s: %v", item.TxHash, err)
+			continue
+		}
+		result.effects[item.TxHash] = effect
+	}
+	return result
+}
+
+func shouldNotifyHistoryEvent(groupInitialized, groupAlreadyKnew bool) bool {
+	return groupInitialized && !groupAlreadyKnew
+}
+
+func addressesForScripts(scripts []string, addresses map[string]string) []string {
+	result := make([]string, 0, len(scripts))
+	for _, script := range scripts {
+		if address := addresses[script]; address != "" {
+			result = appendUniqueStrings(result, address)
+		}
+	}
+	return result
 }
 
 func latestHistory(history []electrum.HistoryItem) (electrum.HistoryItem, bool) {
@@ -1032,11 +1818,11 @@ func (a *App) expandDiscoveryLocked() error {
 	gap := discoveryGap(a.state.DiscoveryGap)
 	addressOwners := make(map[string]string, len(a.state.Watches))
 	for _, watch := range a.state.Watches {
-		addressOwners[watch.Address] = watch.GroupID
+		addressOwners[watchIdentityKey(watch)] = watch.GroupID
 	}
 	for groupIndex := range a.state.Groups {
 		group := &a.state.Groups[groupIndex]
-		if group.ScriptType == "address" {
+		if group.ScriptType == "address" || group.Bulk || group.Combined {
 			continue
 		}
 		currentCount := group.Count
@@ -1072,19 +1858,20 @@ func (a *App) expandDiscoveryLocked() error {
 			continue
 		}
 		for _, child := range derived {
-			if owner, exists := addressOwners[child.Address]; exists {
-				if owner != group.ID {
-					group.DiscoveryError = "a newly derived address overlaps another watch"
-				}
-				continue
-			}
 			scriptHash, err := bitcoin.ScriptHash(child.Address)
 			if err != nil {
 				group.DiscoveryError = err.Error()
 				continue
 			}
+			candidate := Watch{Address: child.Address, ScriptHash: scriptHash}
+			if owner, exists := addressOwners[watchIdentityKey(candidate)]; exists {
+				if owner != group.ID {
+					group.DiscoveryError = "a newly derived address overlaps another watch"
+				}
+				continue
+			}
 			a.state.Watches = append(a.state.Watches, Watch{ID: randomID(), GroupID: group.ID, Label: group.Label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
-			addressOwners[child.Address] = group.ID
+			addressOwners[watchIdentityKey(candidate)] = group.ID
 		}
 		if group.DiscoveryError == "" {
 			group.Count = desired
@@ -1122,9 +1909,11 @@ func (a *App) deliverPending() {
 	a.mu.RLock()
 	events := append([]Event(nil), a.state.Events...)
 	groups := append([]WatchGroup(nil), a.state.Groups...)
+	groupViews := a.groupViewsLocked()
 	a.mu.RUnlock()
 	labels := map[string]string{}
 	rules := map[string]WatchGroup{}
+	balances := map[string]notificationBalance{}
 	for _, g := range groups {
 		rules[g.ID] = g
 		if g.Category != "" {
@@ -1133,6 +1922,10 @@ func (a *App) deliverPending() {
 			labels[g.ID] = g.Label
 		}
 	}
+	for _, group := range groupViews {
+		balances[group.ID] = notificationBalance{Confirmed: group.Confirmed, Unconfirmed: group.Unconfirmed}
+	}
+	mempoolOnion := mempoolOnionBase(a.mempoolURLs)
 	tipHeight := int64(0)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if height, tipErr := a.client.TipHeight(ctx); tipErr == nil {
@@ -1140,13 +1933,16 @@ func (a *App) deliverPending() {
 	}
 	cancel()
 	if c.DailyDigest {
-		a.deliverDigest(c, events, labels, rules, tipHeight, time.Now().UTC())
+		a.deliverDigest(c, events, labels, rules, balances, tipHeight, mempoolOnion, time.Now().UTC())
 		return
 	}
 	if c.QuietHours && notificationQuietNow(c, time.Now().UTC()) {
 		return
 	}
 	for _, event := range events {
+		if event.DetailsPending {
+			continue
+		}
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
 			continue
 		}
@@ -1174,21 +1970,25 @@ func (a *App) deliverPending() {
 			a.mu.Unlock()
 			continue
 		}
-		msg := notify.Message(label, event.Direction, event.Received, event.Sent, event.TxID, event.Height)
+		msg := activityMessage(event, label, balances[event.GroupID], tipHeight, mempoolOnion)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		tg, nr := event.TelegramSent, event.NostrSent
 		if c.TelegramEnabled && !tg {
+			log.Printf("notification send started: channel=telegram type=activity")
 			if e := a.notifier.Telegram(ctx, c, msg); e != nil {
-				log.Printf("Telegram delivery failed: %v", e)
+				log.Printf("notification send failed: channel=telegram type=activity error=%v", e)
 			} else {
 				tg = true
+				log.Printf("notification send succeeded: channel=telegram type=activity")
 			}
 		}
 		if c.NostrEnabled && !nr {
+			log.Printf("notification send started: channel=nostr protocol=nip17 type=activity")
 			if e := a.notifier.Nostr(ctx, c, msg); e != nil {
-				log.Printf("NIP-17 delivery failed: %v", e)
+				log.Printf("notification send failed: channel=nostr protocol=nip17 type=activity error=%v", e)
 			} else {
 				nr = true
+				log.Printf("notification send succeeded: channel=nostr protocol=nip17 type=activity")
 			}
 		}
 		cancel()
@@ -1215,7 +2015,7 @@ func notificationQuietNow(c notify.Config, now time.Time) bool {
 	return hour >= c.QuietStart || hour < c.QuietEnd
 }
 
-func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]string, rules map[string]WatchGroup, tipHeight int64, now time.Time) {
+func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]string, rules map[string]WatchGroup, balances map[string]notificationBalance, tipHeight int64, mempoolOnion string, now time.Time) {
 	local := now.Add(time.Duration(c.UTCOffset) * time.Hour)
 	date := local.Format("2006-01-02")
 	if local.Hour() < c.DigestHour {
@@ -1226,6 +2026,9 @@ func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]s
 	a.mu.RUnlock()
 	ready := make([]Event, 0, len(events))
 	for _, event := range events {
+		if event.DetailsPending {
+			continue
+		}
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
 			continue
 		}
@@ -1242,23 +2045,27 @@ func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]s
 	if len(ready) == 0 {
 		return
 	}
-	message := digestMessage(ready, labels)
+	message := digestMessage(ready, labels, balances, tipHeight, mempoolOnion)
 	tgSent, nrSent := false, false
 	if c.TelegramEnabled && lastTelegram != date {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		log.Printf("notification send started: channel=telegram type=digest")
 		if err := a.notifier.Telegram(ctx, c, message); err != nil {
-			log.Printf("Telegram digest failed: %v", err)
+			log.Printf("notification send failed: channel=telegram type=digest error=%v", err)
 		} else {
 			tgSent = true
+			log.Printf("notification send succeeded: channel=telegram type=digest")
 		}
 		cancel()
 	}
 	if c.NostrEnabled && lastNostr != date {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		log.Printf("notification send started: channel=nostr protocol=nip17 type=digest")
 		if err := a.notifier.Nostr(ctx, c, message); err != nil {
-			log.Printf("NIP-17 digest failed: %v", err)
+			log.Printf("notification send failed: channel=nostr protocol=nip17 type=digest error=%v", err)
 		} else {
 			nrSent = true
+			log.Printf("notification send succeeded: channel=nostr protocol=nip17 type=digest")
 		}
 		cancel()
 	}
@@ -1304,24 +2111,170 @@ func (a *App) markEventDelivery(event Event, telegram, nostr bool) {
 	_ = a.saveLocked()
 }
 
-func digestMessage(events []Event, labels map[string]string) string {
+func digestMessage(events []Event, labels map[string]string, balances map[string]notificationBalance, tipHeight int64, mempoolOnion string) string {
 	var message strings.Builder
-	fmt.Fprintf(&message, "s/watcher daily digest: %d activities", len(events))
+	fmt.Fprintf(&message, "**s/watcher daily digest**\n\n**Activities:** %d", len(events))
 	limit := len(events)
 	if limit > 10 {
 		limit = 10
 	}
+	included := 0
 	for _, event := range events[:limit] {
 		label := labels[event.GroupID]
 		if label == "" {
 			label = "Bitcoin watch"
 		}
-		fmt.Fprintf(&message, "\n\n%s\n%s · received %d sat · sent %d sat\n%s", label, event.Direction, event.Received, event.Sent, event.TxID)
+		section := "\n\n---\n\n" + activityMessage(event, label, balances[event.GroupID], tipHeight, mempoolOnion)
+		if utf8.RuneCountInString(message.String())+utf8.RuneCountInString(section) > 3800 {
+			break
+		}
+		message.WriteString(section)
+		included++
 	}
-	if len(events) > limit {
-		fmt.Fprintf(&message, "\n\n…and %d more activities.", len(events)-limit)
+	if len(events) > included {
+		fmt.Fprintf(&message, "\n\n**More activities:** %d", len(events)-included)
 	}
 	return message.String()
+}
+
+func activityMessage(event Event, label string, balance notificationBalance, tipHeight int64, mempoolOnion string) string {
+	var message strings.Builder
+	fmt.Fprintf(&message, "**s/watcher activity**\n\n**Watch:** %s\n**Activity:** %s\n**Received:** %s\n**Sent:** %s\n**Net change:** %s", markdownText(label), notificationDirection(event.Direction), formatBitcoinAmount(event.Received), formatBitcoinAmount(event.Sent), formatSignedBitcoinAmount(event.Net, true))
+	if event.Height > 0 {
+		confirmations := int64(1)
+		if tipHeight >= event.Height {
+			confirmations = tipHeight - event.Height + 1
+		}
+		fmt.Fprintf(&message, "\n**State:** Confirmed · block %d · %d confirmation", event.Height, confirmations)
+		if confirmations != 1 {
+			message.WriteByte('s')
+		}
+	} else {
+		message.WriteString("\n**State:** Unconfirmed · mempool")
+	}
+	fmt.Fprintf(&message, "\n**Current balance:** %s", formatSignedBitcoinAmount(balance.Confirmed, false))
+	if balance.Unconfirmed != 0 {
+		fmt.Fprintf(&message, " · %s pending", formatSignedBitcoinAmount(balance.Unconfirmed, true))
+	}
+	if event.Height == 0 && event.Replaceable && event.Direction == "received" {
+		message.WriteString("\n**RBF:** Replaceable — do not treat as final until confirmed.")
+	}
+	if event.Runestone {
+		message.WriteString("\n**Runes:** Runestone detected")
+	}
+	if event.Inscriptions > 0 {
+		fmt.Fprintf(&message, "\n**Inscriptions:** %d inscription envelope", event.Inscriptions)
+		if event.Inscriptions != 1 {
+			message.WriteByte('s')
+		}
+		message.WriteString(" detected")
+	}
+	if len(event.OPReturn) > 0 {
+		message.WriteString("\n**OP_RETURN:**")
+		limit := len(event.OPReturn)
+		if limit > 5 {
+			limit = 5
+		}
+		for _, value := range event.OPReturn[:limit] {
+			fmt.Fprintf(&message, "\n• %s", markdownText(truncateRunes(value, 160)))
+		}
+		if len(event.OPReturn) > limit {
+			fmt.Fprintf(&message, "\n• …and %d more", len(event.OPReturn)-limit)
+		}
+	}
+	if !event.SeenAt.IsZero() {
+		fmt.Fprintf(&message, "\n**Detected:** %s", event.SeenAt.UTC().Format("2006-01-02 15:04 UTC"))
+	}
+	if mempoolOnion != "" {
+		fmt.Fprintf(&message, "\n**Transaction:** %s/tx/%s", strings.TrimRight(mempoolOnion, "/"), url.PathEscape(event.TxID))
+	} else {
+		fmt.Fprintf(&message, "\n**Transaction:** `%s`", markdownCode(event.TxID))
+	}
+	return message.String()
+}
+
+func markdownCode(value string) string {
+	return strings.NewReplacer("\\", "\\\\", "`", "\\`").Replace(value)
+}
+
+func markdownText(value string) string {
+	return strings.NewReplacer(
+		"\\", "\\\\",
+		"*", "\\*",
+		"_", "\\_",
+		"`", "\\`",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	).Replace(value)
+}
+
+func formatBitcoinAmount(sats uint64) string {
+	if sats < 1_000_000 {
+		return fmt.Sprintf("%d sat", sats)
+	}
+	whole := sats / 100_000_000
+	fraction := sats % 100_000_000
+	if fraction == 0 {
+		return fmt.Sprintf("%d BTC", whole)
+	}
+	fractionText := strings.TrimRight(fmt.Sprintf("%08d", fraction), "0")
+	return fmt.Sprintf("%d.%s BTC", whole, fractionText)
+}
+
+func formatSignedBitcoinAmount(sats int64, alwaysSign bool) string {
+	if sats < 0 {
+		magnitude := uint64(-(sats + 1)) + 1
+		return "-" + formatBitcoinAmount(magnitude)
+	}
+	prefix := ""
+	if alwaysSign {
+		prefix = "+"
+	}
+	return prefix + formatBitcoinAmount(uint64(sats))
+}
+
+func notificationDirection(direction string) string {
+	switch direction {
+	case "received":
+		return "Incoming"
+	case "sent":
+		return "Outgoing"
+	case "self-transfer":
+		return "Self-transfer"
+	default:
+		return "Activity"
+	}
+}
+
+func mempoolOnionBase(urls []string) string {
+	for _, candidate := range urls {
+		parsed, err := url.Parse(candidate)
+		if err == nil && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".onion") {
+			return strings.TrimRight(candidate, "/")
+		}
+	}
+	return ""
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func notificationEligible(group WatchGroup, event Event, tipHeight int64) (eligible, waiting bool) {
@@ -1361,16 +2314,20 @@ func notificationEligible(group WatchGroup, event Event, tipHeight int64) (eligi
 }
 
 func (a *App) eventExistsLocked(groupID, txID string) bool {
-	for _, event := range a.state.Events {
+	return a.eventIndexLocked(groupID, txID) >= 0
+}
+
+func (a *App) eventIndexLocked(groupID, txID string) int {
+	for index, event := range a.state.Events {
 		eventGroupID := event.GroupID
 		if eventGroupID == "" {
 			eventGroupID = event.WatchID
 		}
 		if eventGroupID == groupID && event.TxID == txID {
-			return true
+			return index
 		}
 	}
-	return false
+	return -1
 }
 
 func direction(effect electrum.Effect) string {
@@ -1394,11 +2351,20 @@ func (a *App) groupViewsLocked() []groupView {
 		if group.Category == "" {
 			group.Category = "uncategorized"
 		}
-		if group.ScriptType != "address" {
+		if group.Combined {
+			group.Source = fmt.Sprintf("%d addresses combined manually", group.Count)
+			group.ScriptType = "combined watch group"
+		} else if group.Bulk {
+			group.Source = fmt.Sprintf("%d addresses pasted in bulk", group.Count)
+			group.ScriptType = "bulk address list"
+		} else if group.ScriptType != "address" {
 			group.ScriptType += fmt.Sprintf(" · smart gap %d", discoveryGap(a.state.DiscoveryGap))
 		}
 		indexes[group.ID] = len(views)
 		typeName, typeCode, typeURL := addressTypeDetails(group.Source, scriptTypeKey)
+		if group.Bulk || group.Combined {
+			typeName, typeCode, typeURL = "", "", ""
+		}
 		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
 	}
 	for _, watch := range a.state.Watches {
@@ -1420,6 +2386,14 @@ func (a *App) groupViewsLocked() []groupView {
 			index = len(views) - 1
 		}
 		view := &views[index]
+		if view.Bulk || view.Combined {
+			typeName, typeCode, typeURL := addressTypeDetails(watch.Address, "address")
+			if view.AddressTypeCode == "" {
+				view.AddressTypeName, view.AddressTypeCode, view.AddressTypeURL = typeName, typeCode, typeURL
+			} else if view.AddressTypeCode != typeCode {
+				view.AddressTypeName, view.AddressTypeCode, view.AddressTypeURL = "Mixed mainnet address types", "multiple types", "https://github.com/bitcoin/bips"
+			}
+		}
 		view.Addresses++
 		view.Confirmed += watch.Confirmed
 		view.Unconfirmed += watch.Unconfirmed
@@ -1645,6 +2619,27 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
+func parseMempoolURLs(raw string) []string {
+	var candidates []string
+	if err := json.Unmarshal([]byte(raw), &candidates); err != nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")
+		parsed, err := url.Parse(candidate)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			continue
+		}
+		if !seen[candidate] {
+			seen[candidate] = true
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
 func maskIdentifier(value string) string {
 	runes := []rune(value)
 	if len(runes) <= 8 {
@@ -1669,11 +2664,11 @@ func legacyMask(length int) string {
 func eventAmount(event Event) string {
 	switch event.Direction {
 	case "received":
-		return fmt.Sprintf("+%d sat", event.Received)
+		return "+" + formatBitcoinAmount(event.Received)
 	case "sent":
-		return fmt.Sprintf("-%d sat", event.Sent)
+		return "-" + formatBitcoinAmount(event.Sent)
 	case "self-transfer":
-		return fmt.Sprintf("net %d sat · in %d / out %d", event.Net, event.Received, event.Sent)
+		return fmt.Sprintf("net %s · in %s / out %s", formatSignedBitcoinAmount(event.Net, false), formatBitcoinAmount(event.Received), formatBitcoinAmount(event.Sent))
 	default:
 		return "—"
 	}
@@ -1725,7 +2720,11 @@ func securityHeaders(next http.Handler) http.Handler {
 					return
 				}
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			maxBody := int64(1 << 20)
+			if r.URL.Path == "/watches" {
+				maxBody = maxWatchFormBytes
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), cspNonceKey{}, nonce)))
 	})

@@ -44,13 +44,16 @@ type Header struct {
 }
 
 type Effect struct {
-	Received        uint64
-	Sent            uint64
-	OPReturn        []string
-	Replaceable     bool
-	Runestone       bool
-	Inscriptions    int
-	ReceivedScripts []string
+	Received             uint64
+	Sent                 uint64
+	OPReturn             []string
+	Replaceable          bool
+	Runestone            bool
+	Inscriptions         int
+	ReceivedScripts      []string
+	SpentScripts         []string
+	SourceAddresses      []string
+	DestinationAddresses []string
 }
 
 type response struct {
@@ -141,12 +144,39 @@ func (c *Client) TransactionEffect(ctx context.Context, txID string, scripts [][
 		if uint64(input.PreviousVout) >= uint64(len(previous.Outputs)) {
 			return Effect{}, fmt.Errorf("previous output %s:%d does not exist", input.PreviousTxID, input.PreviousVout)
 		}
-		output := previous.Outputs[input.PreviousVout]
-		if watched[string(output.Script)] {
-			effect.Sent += output.Value
+		addInputEffect(&effect, previous.Outputs[input.PreviousVout], watched)
+	}
+	if effect.Sent > 0 {
+		for _, output := range tx.Outputs {
+			if watched[string(output.Script)] {
+				continue
+			}
+			if address, ok := bitcoin.AddressFromScript(output.Script); ok {
+				effect.DestinationAddresses = appendUnique(effect.DestinationAddresses, address)
+			}
 		}
 	}
 	return effect, nil
+}
+
+func addInputEffect(effect *Effect, output bitcoin.TxOutput, watched map[string]bool) {
+	if watched[string(output.Script)] {
+		effect.Sent += output.Value
+		effect.SpentScripts = appendUnique(effect.SpentScripts, string(output.Script))
+		return
+	}
+	if address, ok := bitcoin.AddressFromScript(output.Script); ok {
+		effect.SourceAddresses = appendUnique(effect.SourceAddresses, address)
+	}
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func (c *Client) transaction(ctx context.Context, txID string) (bitcoin.Transaction, error) {

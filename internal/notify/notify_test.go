@@ -4,7 +4,11 @@
 package notify
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +16,71 @@ import (
 
 	"github.com/nbd-wtf/go-nostr/nip19"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
+func TestTelegramUsesMarkdownV2(t *testing.T) {
+	var payload struct {
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
+	}
+	sender := Sender{HTTP: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})}}
+	err := sender.Telegram(context.Background(), Config{TelegramEnabled: true, TelegramToken: "token", TelegramChatID: "123"}, "**Watch:** cold\\_wallet\n**Net change:** +1 sat.\n**Transaction:** `abc123`")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.ParseMode != "MarkdownV2" {
+		t.Fatalf("unexpected parse mode: %q", payload.ParseMode)
+	}
+	if payload.Text != "*Watch:* cold\\_wallet\n*Net change:* \\+1 sat\\.\n*Transaction:* `abc123`" {
+		t.Fatalf("unexpected Telegram Markdown: %q", payload.Text)
+	}
+}
+
+func TestAuthRequiredRecognizesRelayPublishErrors(t *testing.T) {
+	for _, message := range []string{
+		"auth-required: sign in",
+		"msg: auth-required: sign in",
+	} {
+		if !isAuthRequired(errors.New(message)) {
+			t.Fatalf("expected %q to require NIP-42 authentication", message)
+		}
+	}
+	for _, err := range []error{nil, errors.New("msg: restricted: denied")} {
+		if isAuthRequired(err) {
+			t.Fatalf("did not expect %v to require NIP-42 authentication", err)
+		}
+	}
+}
+
+func TestUniqueRelayURLs(t *testing.T) {
+	got := uniqueRelayURLs([]string{" wss://relay.example ", "", "wss://relay.example", "ws://relay2.example"})
+	if len(got) != 2 || got[0] != "wss://relay.example" || got[1] != "ws://relay2.example" {
+		t.Fatalf("unexpected relay URLs: %#v", got)
+	}
+}
+
+func TestDisplayRelayURLRemovesCredentialsAndQuery(t *testing.T) {
+	got := displayRelayURL("wss://user:secret@relay.example/path?token=secret#fragment")
+	if got != "wss://relay.example/path" {
+		t.Fatalf("unexpected display URL: %q", got)
+	}
+}
+
+func TestConfigureTorSOCKSRejectsInvalidAddress(t *testing.T) {
+	if err := ConfigureTorSOCKS("not-a-host-port"); err == nil {
+		t.Fatal("expected invalid Tor SOCKS address to be rejected")
+	}
+}
 
 func TestEnsureIdentityGeneratesAndPersistsNostrKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notifications.json")
