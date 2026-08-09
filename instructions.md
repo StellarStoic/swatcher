@@ -28,6 +28,17 @@ Open the **Web UI**, enter a label and one of the following, then select
 - An account-level `xpub`, `ypub`, or `zpub`
 - A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor
 
+Use **Find address** to check whether a Bitcoin mainnet address is already part
+of any saved watch. The search reads only s/watcher's persisted local address
+records; it makes no Electrs, Mempool, block-explorer, or other network request.
+It covers individual and bulk addresses plus every xpub or descriptor child
+that s/watcher has already derived and stored. A match shows its wallet and
+group, derivation path, address type, source type, address-level balance, scan
+state, known transaction count, latest transaction, and note. Privacy Mode
+hides balances, notes, and transaction IDs. **Not found** means the address is
+outside current local coverage; it does not prove that the address cannot
+belong to an xpub beyond the configured discovery gap.
+
 For a plain extended key, choose whether to include the `/1` change branch. A
 bare xpub does not identify its address type, so choose Legacy, Nested SegWit,
 Native SegWit, or Taproot when the selector appears. ypub and zpub formats

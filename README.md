@@ -62,10 +62,30 @@ over a network can obtain its corresponding source from the
   server-rendered privacy mode for balances and identifiers.
 - Choose from five persistent Web Interface themes through a StartOS action,
   with color swatches beside every theme name.
+- Find whether a Bitcoin address belongs to any saved watch using only the
+  addresses already persisted by s/watcher, including xpub- and
+  descriptor-derived children.
 
 No private keys are accepted or stored. Public extended keys reveal an entire
 wallet's transaction graph, so the state file and UI should still be treated as
 private information.
+
+## Find address
+
+Use **Find address** in the Web Interface to check whether a Bitcoin mainnet
+address belongs to any watch already saved by s/watcher. The lookup searches
+`/data/state.json` only. It does not ask Electrs, Mempool, a public explorer, or
+any other service and therefore cannot discover addresses beyond the coverage
+s/watcher has already derived and stored.
+
+A match reports the wallet name and group, derivation path when available,
+address type, watch source type, address-level balance, scan state, last check,
+known transaction count, latest transaction, and wallet note. This includes
+children of xpubs and descriptors, bulk imports, and combined watches. Several
+matches are displayed if legacy state contains the same script more than once.
+Privacy Mode omits the note and transaction ID and hides the balance. An
+address that is not found may still belong to a wallet beyond its currently
+stored smart-discovery range.
 
 ## Bulk address groups
 

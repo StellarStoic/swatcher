@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:40',
+  version: '0.1.1:0',
   releaseNotes: {
     en_US:
-      'Shows locally resolved input addresses as transaction sources in watch history and refreshes existing history after upgrade.',
+      'Adds a local Find address tool that identifies saved watches, including already-derived xpub and descriptor addresses, without network requests.',
     de_DE:
-      'Zeigt lokal aufgelöste Eingabeadressen als Transaktionsquellen im Verlauf und aktualisiert bestehende Verlaufsdaten nach dem Upgrade.',
+      'Ergänzt eine lokale Adresssuche für gespeicherte Watches einschließlich bereits abgeleiteter xpub- und Descriptor-Adressen ohne Netzwerkanfragen.',
   },
   migrations: {
     up: async () => {},

@@ -762,6 +762,95 @@ func TestAddWatchAcceptsBrowserMultipartForSingleAndBulk(t *testing.T) {
 	}
 }
 
+func TestFindAddressSearchesPersistedDerivedWatchesOnly(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const address = "bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0"
+	scriptHash, err := bitcoin.ScriptHash(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastChecked := time.Date(2026, 8, 9, 10, 11, 0, 0, time.UTC)
+	lastTxAt := lastChecked.Add(-time.Hour)
+	a.state = state{
+		Groups:  []WatchGroup{{ID: "wallet", Label: "savings", Category: "cold storage", Notes: "hardware wallet", Source: "xpub-local-test", ScriptType: "native-segwit", Count: 20}},
+		Watches: []Watch{{ID: "child", GroupID: "wallet", Label: "savings m/0/7", Address: address, Path: "m/0/7", ScriptHash: scriptHash, Confirmed: 1_500_000, Unconfirmed: 2_000, KnownTx: []string{"one", "two"}, Initialized: true, LastChecked: lastChecked, LastTxID: strings.Repeat("a", 64), LastTxAt: lastTxAt}},
+	}
+	form := url.Values{"address": {strings.ToUpper(address)}}
+	request := httptest.NewRequest(http.MethodPost, "/addresses/find", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.findAddress(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("lookup status %d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	var result addressLookupResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Found || len(result.Matches) != 1 {
+		t.Fatalf("unexpected lookup result: %+v", result)
+	}
+	match := result.Matches[0]
+	if match.GroupID != "wallet" || match.Name != "savings" || match.Group != "cold storage" || match.Path != "m/0/7" || match.AddressType != "P2WPKH" || match.SourceType != "Extended public key" || match.Balance != "0.015 BTC (+2000 sat pending)" || match.ScanStatus != "Initialized" || match.KnownTransactions != 2 || match.Note != "hardware wallet" || match.LastChecked != "2026-08-09 10:11 UTC" || match.LastTransactionAt != "2026-08-09 09:11 UTC" {
+		t.Fatalf("unexpected address metadata: %+v", match)
+	}
+
+	a.state.PrivacyMode = true
+	response = httptest.NewRecorder()
+	a.findAddress(response, request.Clone(request.Context()))
+	body := response.Body.String()
+	for _, secret := range []string{"0.015 BTC", "hardware wallet", strings.Repeat("a", 64)} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("privacy-mode lookup exposed %q: %s", secret, body)
+		}
+	}
+	if !strings.Contains(body, "Hidden by Privacy Mode") {
+		t.Fatalf("privacy-mode lookup did not explain hidden balance: %s", body)
+	}
+}
+
+func TestFindAddressRejectsInvalidOrUnknownAddresses(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := url.Values{"address": {"not-a-bitcoin-address"}}
+	request := httptest.NewRequest(http.MethodPost, "/addresses/find", strings.NewReader(invalid.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.findAddress(response, request)
+	if response.Code != http.StatusBadRequest || strings.Contains(response.Body.String(), "not-a-bitcoin-address") {
+		t.Fatalf("invalid lookup response: %d %s", response.Code, response.Body.String())
+	}
+
+	unknown := url.Values{"address": {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"}}
+	request = httptest.NewRequest(http.MethodPost, "/addresses/find", strings.NewReader(unknown.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.findAddress(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"found":false`) {
+		t.Fatalf("unknown lookup response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestIndexRendersLocalAddressFinder(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, expected := range []string{`id="address-finder"`, `action="/addresses/find"`, "including addresses derived from xpubs and descriptors", "searches only s/watcher's local data", "No Electrs, Mempool, or external request was made", "replaceChildren", "textContent"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("address finder UI is missing %q", expected)
+		}
+	}
+}
+
 func TestAddWatchAcceptsProxySafeURLEncodingThroughSecurityMiddleware(t *testing.T) {
 	tests := []struct {
 		name        string

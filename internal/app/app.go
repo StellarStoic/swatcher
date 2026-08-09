@@ -215,6 +215,28 @@ type pageData struct {
 	CSPNonce         string
 }
 
+type addressLookupResponse struct {
+	Found   bool                 `json:"found"`
+	Matches []addressLookupMatch `json:"matches"`
+}
+
+type addressLookupMatch struct {
+	GroupID           string `json:"groupId"`
+	Name              string `json:"name"`
+	Group             string `json:"group"`
+	Path              string `json:"path,omitempty"`
+	AddressType       string `json:"addressType"`
+	SourceType        string `json:"sourceType"`
+	Balance           string `json:"balance"`
+	ScanStatus        string `json:"scanStatus"`
+	LastChecked       string `json:"lastChecked,omitempty"`
+	LastTransaction   string `json:"lastTransaction,omitempty"`
+	LastTransactionAt string `json:"lastTransactionAt,omitempty"`
+	KnownTransactions int    `json:"knownTransactions"`
+	Note              string `json:"note,omitempty"`
+	ScanError         string `json:"scanError,omitempty"`
+}
+
 var watchMetadataPattern = regexp.MustCompile(`^[a-z0-9_]+(?: [a-z0-9_]+)*$`)
 var watchWIFPattern = regexp.MustCompile(`(?i)(?:^|[^1-9A-HJ-NP-Za-km-z])(?:5[1-9A-HJ-NP-Za-km-z]{50}|[KL][1-9A-HJ-NP-Za-km-z]{51})(?:$|[^1-9A-HJ-NP-Za-km-z])`)
 var seedWordPattern = regexp.MustCompile(`^[A-Za-z]+$`)
@@ -309,6 +331,7 @@ func (a *App) Run(listen string) error {
 	mux.HandleFunc("GET /health", a.health)
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /", a.index)
+	protected.HandleFunc("POST /addresses/find", a.findAddress)
 	protected.HandleFunc("GET /groups/{id}/transactions", a.groupTransactions)
 	protected.HandleFunc("POST /watches", a.addWatch)
 	protected.HandleFunc("POST /groups/{id}/update", a.updateGroup)
@@ -318,6 +341,107 @@ func (a *App) Run(listen string) error {
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
 	return server.ListenAndServe()
+}
+
+func (a *App) findAddress(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		writeAddressLookupError(w, http.StatusBadRequest, "The address lookup could not be read.")
+		return
+	}
+	address := strings.TrimSpace(r.FormValue("address"))
+	if address == "" || len(address) > 128 || !utf8.ValidString(address) {
+		writeAddressLookupError(w, http.StatusBadRequest, "Enter one valid Bitcoin mainnet address.")
+		return
+	}
+	scriptHash, err := bitcoin.ScriptHash(address)
+	if err != nil {
+		writeAddressLookupError(w, http.StatusBadRequest, "Enter one valid Bitcoin mainnet address.")
+		return
+	}
+
+	a.mu.RLock()
+	groups := make(map[string]WatchGroup, len(a.state.Groups))
+	for _, group := range a.state.Groups {
+		groups[group.ID] = group
+	}
+	response := addressLookupResponse{Matches: []addressLookupMatch{}}
+	for _, watch := range a.state.Watches {
+		watchScriptHash := watch.ScriptHash
+		if watchScriptHash == "" {
+			watchScriptHash, _ = bitcoin.ScriptHash(watch.Address)
+		}
+		if watchScriptHash != scriptHash {
+			continue
+		}
+		groupID := watch.GroupID
+		if groupID == "" {
+			groupID = watch.ID
+		}
+		group, ok := groups[groupID]
+		if !ok {
+			group = WatchGroup{ID: groupID, Label: watch.Label, Category: "uncategorized", Source: watch.Address, ScriptType: "address", Count: 1}
+		}
+		category := group.Category
+		if category == "" {
+			category = "uncategorized"
+		}
+		_, addressType, _ := addressTypeDetails(watch.Address, "address")
+		balance := formatSignedBitcoinAmount(watch.Confirmed, false)
+		if watch.Unconfirmed != 0 {
+			balance += fmt.Sprintf(" (%s pending)", formatSignedBitcoinAmount(watch.Unconfirmed, true))
+		}
+		scanStatus := "Not initialized"
+		if watch.Initialized {
+			scanStatus = "Initialized"
+		}
+		match := addressLookupMatch{
+			GroupID: groupID, Name: group.Label, Group: category, Path: watch.Path,
+			AddressType: addressType, SourceType: addressLookupSourceType(group), Balance: balance,
+			ScanStatus: scanStatus, KnownTransactions: len(watch.KnownTx), Note: group.Notes, ScanError: watch.LastError,
+		}
+		if !watch.LastChecked.IsZero() {
+			match.LastChecked = watch.LastChecked.Format("2006-01-02 15:04 UTC")
+		}
+		if watch.LastTxID != "" {
+			match.LastTransaction = watch.LastTxID
+		}
+		if !watch.LastTxAt.IsZero() {
+			match.LastTransactionAt = watch.LastTxAt.Format("2006-01-02 15:04 UTC")
+		}
+		if a.state.PrivacyMode {
+			match.Balance = "Hidden by Privacy Mode"
+			match.LastTransaction = ""
+			match.Note = ""
+		}
+		response.Matches = append(response.Matches, match)
+	}
+	a.mu.RUnlock()
+	response.Found = len(response.Matches) > 0
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func writeAddressLookupError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func addressLookupSourceType(group WatchGroup) string {
+	switch {
+	case group.Combined:
+		return "Combined watch"
+	case group.Bulk:
+		return "Bulk address import"
+	case strings.Contains(group.Source, "("):
+		return "Output descriptor"
+	case isBareXpub(group.Source) || strings.HasPrefix(group.Source, "ypub") || strings.HasPrefix(group.Source, "zpub"):
+		return "Extended public key"
+	default:
+		return "Single address"
+	}
 }
 
 func (a *App) index(w http.ResponseWriter, r *http.Request) {
