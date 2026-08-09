@@ -379,6 +379,23 @@ func TestTransactionHistoryPrivacyModeMasksAmountsAndTxIDs(t *testing.T) {
 	}
 }
 
+func TestEventDetailVersionsRetriesMissingAddressAmounts(t *testing.T) {
+	groupID := "group"
+	txID := "transaction"
+	key := groupID + "\x00" + txID
+	events := []Event{
+		{GroupID: groupID, TxID: txID, DetailsVersion: currentEventDetailsVersion, SourceAddresses: []string{"source"}},
+		{GroupID: groupID, TxID: txID, DetailsVersion: currentEventDetailsVersion, SourceAddresses: []string{"source"}, SourceAddressAmounts: map[string]uint64{"source": 42}},
+	}
+	if version := eventDetailVersions(events)[key]; version != 0 {
+		t.Fatalf("incomplete duplicate event was treated as detail version %d", version)
+	}
+	events[0].SourceAddressAmounts = map[string]uint64{"source": 0}
+	if version := eventDetailVersions(events)[key]; version != currentEventDetailsVersion {
+		t.Fatalf("complete events were treated as detail version %d", version)
+	}
+}
+
 func TestTransactionHistoryListsPendingElectrsDetails(t *testing.T) {
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {

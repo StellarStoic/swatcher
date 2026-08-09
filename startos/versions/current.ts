@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:2',
+  version: '0.1.1:3',
   releaseNotes: {
     en_US:
-      'Shows the exact amount consumed from or sent to each input and output address in transaction history.',
+      'Fixes transaction address amounts remaining stuck on Refreshing locally after an upgrade.',
     de_DE:
-      'Zeigt im Transaktionsverlauf für jede Ein- und Ausgangsadresse den genauen verbrauchten oder gesendeten Betrag.',
+      'Behebt, dass Transaktionsadressbeträge nach einem Upgrade dauerhaft als lokal aktualisiert angezeigt wurden.',
   },
   migrations: {
     up: async () => {},
