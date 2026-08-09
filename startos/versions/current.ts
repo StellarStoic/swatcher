@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:0',
+  version: '0.1.1:1',
   releaseNotes: {
     en_US:
-      'Adds a local Find address tool that identifies saved watches, including already-derived xpub and descriptor addresses, without network requests.',
+      'Adds a private local Mempool link for inspecting addresses that are not found in saved s/watcher watches.',
     de_DE:
-      'Ergänzt eine lokale Adresssuche für gespeicherte Watches einschließlich bereits abgeleiteter xpub- und Descriptor-Adressen ohne Netzwerkanfragen.',
+      'Ergänzt einen privaten lokalen Mempool-Link zur Prüfung von Adressen, die nicht in gespeicherten s/watcher-Watches gefunden wurden.',
   },
   migrations: {
     up: async () => {},

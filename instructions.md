@@ -42,6 +42,12 @@ hides balances, notes, and transaction IDs. **Not found** means the address is
 outside current local coverage; it does not prove that the address cannot
 belong to an xpub beyond the configured discovery gap.
 
+For an address that is not found, select **Check address in local Mempool** to
+inspect its blockchain activity through your own StartOS Mempool service. The
+link prefers Mempool's onion interface and otherwise uses its private LAN
+interface. It never opens a public explorer. The link is shown only while the
+optional Mempool dependency is available.
+
 For a plain extended key, choose whether to include the `/1` change branch. A
 bare xpub does not identify its address type, so choose Legacy, Nested SegWit,
 Native SegWit, or Taproot when the selector appears. ypub and zpub formats
