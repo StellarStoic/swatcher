@@ -88,6 +88,13 @@ Privacy Mode omits the note and transaction ID and hides the balance. An
 address that is not found may still belong to a wallet beyond its currently
 stored smart-discovery range.
 
+When the optional local Mempool dependency is available, a **Check address in
+local Mempool** link appears for addresses not found in saved watches. The link
+prefers Mempool's StartOS onion address and falls back to its private LAN
+address when no onion interface is available. It never links to a public
+explorer. If Mempool is unavailable, s/watcher explains that instead of
+offering an external link.
+
 ## Bulk address groups
 
 Select **Paste in bulk** in the add-watch form to paste between 2 and 10,000

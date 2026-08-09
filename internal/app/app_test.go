@@ -844,7 +844,7 @@ func TestIndexRendersLocalAddressFinder(t *testing.T) {
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	for _, expected := range []string{`id="address-finder"`, `action="/addresses/find"`, "including addresses derived from xpubs and descriptors", "searches only s/watcher's local data", "No Electrs, Mempool, or external request was made", "replaceChildren", "textContent"} {
+	for _, expected := range []string{`id="address-finder"`, `action="/addresses/find"`, "including addresses derived from xpubs and descriptors", "searches only s/watcher's local data", "ownership check used only local s/watcher data", "mempoolAddressBase=onionMempoolBase||privateMempoolBase", "'/address/'", "Check address in local Mempool over Tor", "optional Mempool service", "replaceChildren", "textContent"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("address finder UI is missing %q", expected)
 		}
