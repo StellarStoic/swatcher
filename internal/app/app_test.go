@@ -332,7 +332,7 @@ func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", response.Code, body)
 	}
-	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0", "123432 sat", "From watched address", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "1234 sat", "To address", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "0.12233444 BTC", "http://mempool.local", "2 BTC"} {
+	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("history page is missing %q", expected)
 		}
@@ -376,6 +376,9 @@ func TestTransactionHistoryPrivacyModeMasksAmountsAndTxIDs(t *testing.T) {
 	}
 	if !strings.Contains(body, maskIdentifier(txID)) || !strings.Contains(body, maskIdentifier(sourceAddress)) || !strings.Contains(body, maskIdentifier(destinationAddress)) || !strings.Contains(body, "masked") {
 		t.Fatal("privacy history did not render masked values")
+	}
+	if strings.Contains(body, "data-address=") {
+		t.Fatal("privacy history rendered a copyable address")
 	}
 }
 

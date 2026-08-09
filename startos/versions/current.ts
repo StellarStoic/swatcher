@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:3',
+  version: '0.1.1:4',
   releaseNotes: {
     en_US:
-      'Fixes transaction address amounts remaining stuck on Refreshing locally after an upgrade.',
+      'Makes every visible Bitcoin address in transaction history copyable with one click.',
     de_DE:
-      'Behebt, dass Transaktionsadressbeträge nach einem Upgrade dauerhaft als lokal aktualisiert angezeigt wurden.',
+      'Macht jede sichtbare Bitcoin-Adresse im Transaktionsverlauf mit einem Klick kopierbar.',
   },
   migrations: {
     up: async () => {},

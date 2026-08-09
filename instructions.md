@@ -166,9 +166,10 @@ entry includes amounts, external input addresses for incoming transactions,
 watched input addresses and external destination addresses for outgoing
 transactions. Each address row shows the exact amount consumed from that input
 or sent to that output; repeated appearances of one address are summed. Values
-below one million sats use sats and larger values use BTC. Entries also include
-transaction state and time,
-the local Mempool link when available, and any RBF, Runes, inscription,
+below one million sats use sats and larger values use BTC. Select any visible
+transaction address to copy it; Privacy Mode keeps masked addresses
+non-copyable. Entries also include transaction state and time, the local
+Mempool link when available, and any RBF, Runes, inscription,
 privacy-indicator, or OP_RETURN details already detected by s/watcher. Privacy
 Mode masks amounts, transaction IDs, and addresses on this page too.
 If Electrs returns a transaction ID but its full inputs cannot yet be decoded,

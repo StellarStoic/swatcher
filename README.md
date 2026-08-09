@@ -270,8 +270,9 @@ incoming transactions, watched input addresses and external destination
 addresses for outgoing transactions. Every displayed input and output address
 has its exact transaction amount beside it; repeated appearances of the same
 address are summed into one row. Values below one million sats are shown in
-sats and larger values are shown in BTC.
-confirmation or mempool state, RBF status, Runes and inscription markers,
+sats and larger values are shown in BTC. Select any visible transaction address
+to copy it; masked addresses remain non-copyable in Privacy Mode. Other details
+include confirmation or mempool state, RBF status, Runes and inscription markers,
 OP_RETURN text, transaction time, and the local transaction link. It
 sorts by newest or oldest time, largest or smallest value, incoming or outgoing
 direction, and mempool or confirmed state. Results are paginated at 100
