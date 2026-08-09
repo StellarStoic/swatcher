@@ -1,4 +1,4 @@
-// Copyright (C) 2026 StellarStoic
+// Copyleft 2026 StellarStoic
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { StartSdk } from '@start9labs/start-sdk'
