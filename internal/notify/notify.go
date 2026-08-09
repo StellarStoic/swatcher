@@ -175,7 +175,11 @@ func (s Sender) Telegram(ctx context.Context, c Config, message string) error {
 	if c.TelegramToken == "" || c.TelegramChatID == "" {
 		return errors.New("Telegram credentials missing")
 	}
-	b, _ := json.Marshal(map[string]string{"chat_id": c.TelegramChatID, "text": message})
+	b, _ := json.Marshal(map[string]string{
+		"chat_id":    c.TelegramChatID,
+		"text":       telegramMarkdownV2(message),
+		"parse_mode": "MarkdownV2",
+	})
 	r, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.telegram.org/bot"+c.TelegramToken+"/sendMessage", bytes.NewReader(b))
 	r.Header.Set("Content-Type", "application/json")
 	x, e := s.client().Do(r)
@@ -188,6 +192,50 @@ func (s Sender) Telegram(ctx context.Context, c Config, message string) error {
 	}
 	return nil
 }
+
+func telegramMarkdownV2(message string) string {
+	var formatted strings.Builder
+	formatted.Grow(len(message) + len(message)/8)
+	bold := false
+	code := false
+	for index := 0; index < len(message); {
+		if !code && strings.HasPrefix(message[index:], "**") {
+			formatted.WriteByte('*')
+			bold = !bold
+			index += 2
+			continue
+		}
+		if message[index] == '\\' && index+1 < len(message) {
+			formatted.WriteByte('\\')
+			formatted.WriteByte(message[index+1])
+			index += 2
+			continue
+		}
+		character := message[index]
+		if character == '`' {
+			formatted.WriteByte(character)
+			code = !code
+			index++
+			continue
+		}
+		if code {
+			formatted.WriteByte(character)
+			index++
+			continue
+		}
+		if strings.ContainsRune("_*[]()~`>#+-=|{}.!", rune(character)) {
+			formatted.WriteByte('\\')
+		}
+		formatted.WriteByte(character)
+		index++
+	}
+	if bold || code {
+		// Treat an unmatched CommonMark marker as literal input.
+		return strings.NewReplacer("*", "\\*", "`", "\\`").Replace(formatted.String())
+	}
+	return formatted.String()
+}
+
 func (s Sender) Nostr(ctx context.Context, c Config, message string) error {
 	if !c.NostrEnabled {
 		return nil

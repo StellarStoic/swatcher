@@ -44,7 +44,9 @@ The initial StartOS-local Electrs scan may take time for very large lists.
 
 To group watches that were already added, choose **Combine**. This reveals a
 checkbox beside each watch and changes the button to **Combine selected**. That
-button remains disabled until at least two rows are selected. Select between 2
+button remains disabled until at least two rows are selected. Select **Cancel**
+to leave selection mode and clear the current choices without refreshing the
+page. Select between 2
 and 100 rows, containing no more than 10,000 addresses in total, and choose
 **Combine selected**. A row may represent one address or an entire xpub,
 descriptor, bulk, or previously combined group. The confirmation dialog names
@@ -57,6 +59,9 @@ history is merged and is never resent as new notifications. Leave the new note
 empty to retain existing notes where possible. Matching notification rules are
 inherited; differing rules disable notifications until the combined watch is
 edited.
+If selected watches contain the same address, s/watcher retains one canonical
+address record, preserves known history and notes, and recalculates affected
+transactions through local Electrs instead of counting the address twice.
 
 The watch list shows a small linked mainnet type label such as P2PKH,
 P2SH-P2WPKH, P2WPKH, P2WSH, or P2TR. Select **Edit** to change the address type
@@ -130,6 +135,21 @@ Each watch also shows the latest transaction found in its complete local
 Electrs history and how long ago it occurred. Confirmed transactions use their
 block-header time; unconfirmed transactions use the time s/watcher first sees
 them. Privacy Mode masks this transaction ID.
+
+Select **Show all transactions** below the latest transaction to open that
+watch group's complete history returned by your local Electrs service,
+including transactions from before the watch was added. Historical imports do
+not trigger notifications. The page shows 100 transactions at a time with
+previous and next navigation. Sort by newest or oldest, largest or smallest
+value, incoming or outgoing activity, or mempool and confirmed state. Each
+entry includes amounts, watched input and receiving addresses, external
+destination addresses for outgoing transactions, transaction state and time,
+the local Mempool link when available, and any RBF, Runes, inscription,
+privacy-indicator, or OP_RETURN details already detected by s/watcher. Privacy
+Mode masks amounts, transaction IDs, and addresses on this page too.
+If Electrs returns a transaction ID but its full inputs cannot yet be decoded,
+the transaction remains visible as **Details pending**. s/watcher retries it on
+later scans and does not send an incomplete notification.
 
 If the optional Mempool dependency is installed and running, visible
 transaction IDs in the watch list and New activity table are links to your own
@@ -264,11 +284,19 @@ state, current confirmed and pending balance, detection time, and the plain
 transaction ID. They also include an RBF warning for replaceable incoming
 mempool transactions, Runes and inscription-envelope detections, and printable
 OP_RETURN messages when present. Up to five OP_RETURN messages are included in
-one alert.
+one alert. Telegram and Nostr messages use Markdown with a bold heading and
+field labels, with each tracked detail on its own line.
+The Web Interface and notifications show amounts at or above 1,000,000 sat in
+BTC; smaller amounts remain in sat.
 
 When StartOS exposes an onion address for the optional local Mempool service,
 the transaction line becomes that local `/tx/` URL so Telegram and compatible
 Nostr clients can open it. If no Mempool onion interface is available, the
-transaction remains a non-linkable ID. s/watcher never substitutes a clearnet
-explorer. Daily digests contain the same details and summarize omitted events
+transaction remains a non-linkable inline-code ID that is easy to copy in
+Telegram. s/watcher never substitutes a clearnet explorer. Daily digests
+contain the same details and summarize omitted events
 before reaching Telegram's message-size limit.
+The service logs every Telegram and NIP-17 send attempt and whether it
+succeeded or failed, identifying activity, digest, and test messages. Logs do
+not include credentials, recipients, wallet names, addresses, transaction IDs,
+or message content.

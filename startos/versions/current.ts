@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.0:30',
+  version: '0.1.0:39',
   releaseNotes: {
     en_US:
-      'Fixes NIP-17 delivery to authenticated relays with NIP-42, adds optional StartOS Tor routing for onion relays, and reports actionable per-relay delivery errors.',
+      'Adds a Cancel control to combine-selection mode that clears selected watches and restores the normal interface without refreshing or changing scroll position.',
     de_DE:
-      'Behebt die NIP-17-Zustellung an authentifizierte Relays mit NIP-42, ergänzt optionales StartOS-Tor-Routing für Onion-Relays und meldet aussagekräftige Zustellfehler je Relay.',
+      'Ergänzt einen Abbrechen-Schalter im Kombinieren-Auswahlmodus, der die Auswahl löscht und die normale Ansicht ohne Neuladen oder Positionsverlust wiederherstellt.',
   },
   migrations: {
     up: async () => {},

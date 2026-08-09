@@ -6,6 +6,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
 	"github.com/s-watcher/s-watcher/internal/notify"
 	"github.com/s-watcher/s-watcher/internal/webauth"
@@ -119,7 +121,7 @@ func TestNotificationScheduleHelpers(t *testing.T) {
 		0,
 		"",
 	)
-	if !strings.Contains(message, "daily digest: 1 activities") || !strings.Contains(message, "donations / website") || !strings.Contains(message, "42 sat") {
+	if !strings.Contains(message, "**s/watcher daily digest**") || !strings.Contains(message, "**Activities:** 1") || !strings.Contains(message, "donations / website") || !strings.Contains(message, "42 sat") {
 		t.Fatalf("unexpected digest: %s", message)
 	}
 }
@@ -127,8 +129,8 @@ func TestNotificationScheduleHelpers(t *testing.T) {
 func TestActivityMessageIncludesTrackedDetailsAndOnionTransactionLink(t *testing.T) {
 	event := Event{
 		Direction:    "received",
-		Received:     12_345,
-		Net:          12_345,
+		Received:     123_456_789,
+		Net:          123_456_789,
 		TxID:         strings.Repeat("a", 64),
 		Height:       900,
 		Replaceable:  true,
@@ -137,40 +139,94 @@ func TestActivityMessageIncludesTrackedDetailsAndOnionTransactionLink(t *testing
 		OPReturn:     []string{"thank you", "invoice 42"},
 		SeenAt:       time.Date(2026, 8, 6, 12, 30, 0, 0, time.UTC),
 	}
-	message := activityMessage(event, "donations / website", notificationBalance{Confirmed: 55_000, Unconfirmed: 500}, 902, "http://privateexplorer.onion/")
+	message := activityMessage(event, "donations / website", notificationBalance{Confirmed: 255_000_000, Unconfirmed: 2_000_000}, 902, "http://privateexplorer.onion/")
 	for _, expected := range []string{
-		"Watch: donations / website",
-		"Activity: Incoming",
-		"Received: 12345 sat",
-		"Sent: 0 sat",
-		"Net change: +12345 sat",
+		"**Watch:** donations / website",
+		"**Activity:** Incoming",
+		"**Received:** 1.23456789 BTC",
+		"**Sent:** 0 sat",
+		"**Net change:** +1.23456789 BTC",
 		"block 900 · 3 confirmations",
-		"Current balance: 55000 sat · +500 sat pending",
-		"Runes: Runestone detected",
-		"Inscriptions: 2 inscription envelopes detected",
-		"OP_RETURN:\n• thank you\n• invoice 42",
-		"Detected: 2026-08-06 12:30 UTC",
-		"Transaction: http://privateexplorer.onion/tx/" + strings.Repeat("a", 64),
+		"**Current balance:** 2.55 BTC · +0.02 BTC pending",
+		"**Runes:** Runestone detected",
+		"**Inscriptions:** 2 inscription envelopes detected",
+		"**OP_RETURN:**\n• thank you\n• invoice 42",
+		"**Detected:** 2026-08-06 12:30 UTC",
+		"**Transaction:** http://privateexplorer.onion/tx/" + strings.Repeat("a", 64),
 	} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("rich activity message is missing %q:\n%s", expected, message)
 		}
 	}
-	if strings.Contains(message, "RBF:") {
+	if strings.Contains(message, "**RBF:**") {
 		t.Fatalf("confirmed transaction must not show an RBF warning: %s", message)
+	}
+}
+
+func TestBitcoinAmountFormatting(t *testing.T) {
+	tests := []struct {
+		name string
+		sats uint64
+		want string
+	}{
+		{name: "zero", sats: 0, want: "0 sat"},
+		{name: "below threshold", sats: 999_999, want: "999999 sat"},
+		{name: "threshold", sats: 1_000_000, want: "0.01 BTC"},
+		{name: "eight decimals", sats: 1_234_567, want: "0.01234567 BTC"},
+		{name: "whole bitcoin", sats: 100_000_000, want: "1 BTC"},
+		{name: "trimmed decimals", sats: 123_450_000, want: "1.2345 BTC"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := formatBitcoinAmount(test.sats); got != test.want {
+				t.Fatalf("formatBitcoinAmount(%d) = %q; want %q", test.sats, got, test.want)
+			}
+		})
+	}
+	if got := formatSignedBitcoinAmount(-2_000_000, false); got != "-0.02 BTC" {
+		t.Fatalf("unexpected negative amount: %q", got)
+	}
+	if got := formatSignedBitcoinAmount(42, true); got != "+42 sat" {
+		t.Fatalf("unexpected signed sat amount: %q", got)
+	}
+}
+
+func TestEventAmountUsesSharedUnits(t *testing.T) {
+	if got := eventAmount(Event{Direction: "received", Received: 1_000_000}); got != "+0.01 BTC" {
+		t.Fatalf("unexpected received amount: %q", got)
+	}
+	if got := eventAmount(Event{Direction: "sent", Sent: 999_999}); got != "-999999 sat" {
+		t.Fatalf("unexpected sent amount: %q", got)
+	}
+	if got := eventAmount(Event{Direction: "self-transfer", Received: 2_000_000, Sent: 1_000_000, Net: 1_000_000}); got != "net 0.01 BTC · in 0.02 BTC / out 0.01 BTC" {
+		t.Fatalf("unexpected self-transfer amount: %q", got)
 	}
 }
 
 func TestActivityMessageUsesPlainTxIDWithoutOnionAndWarnsForRBF(t *testing.T) {
 	event := Event{Direction: "received", Received: 900, Net: 900, TxID: "plain-txid", Replaceable: true}
 	message := activityMessage(event, "cold / reserve", notificationBalance{Confirmed: 100}, 0, "")
-	for _, expected := range []string{"Activity: Incoming", "State: Unconfirmed · mempool", "RBF: Replaceable", "Transaction: plain-txid"} {
+	for _, expected := range []string{"**Activity:** Incoming", "**State:** Unconfirmed · mempool", "**RBF:** Replaceable", "**Transaction:** `plain-txid`"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("plain activity message is missing %q: %s", expected, message)
 		}
 	}
 	if strings.Contains(message, "/tx/") || strings.Contains(message, "http://") || strings.Contains(message, "https://") {
 		t.Fatalf("transaction became linkable without an onion interface: %s", message)
+	}
+}
+
+func TestActivityMessageEscapesUntrustedMarkdown(t *testing.T) {
+	event := Event{Direction: "received", TxID: "tx_id", OPReturn: []string{"**fake label** [link](url) `code` ~~gone~~"}}
+	message := activityMessage(event, "cold_wallet *mine*", notificationBalance{}, 0, "")
+	for _, expected := range []string{
+		"**Watch:** cold\\_wallet \\*mine\\*",
+		"• \\*\\*fake label\\*\\* \\[link\\]\\(url\\) \\`code\\` \\~\\~gone\\~\\~",
+		"**Transaction:** `tx_id`",
+	} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("escaped message is missing %q:\n%s", expected, message)
+		}
 	}
 }
 
@@ -204,6 +260,160 @@ func TestWatchSortModes(t *testing.T) {
 		if groups[0].ID != want {
 			t.Fatalf("sort %s placed %s first, want %s", mode, groups[0].ID, want)
 		}
+	}
+}
+
+func TestTransactionSortModes(t *testing.T) {
+	older := time.Unix(100, 0)
+	newer := time.Unix(200, 0)
+	tests := []struct {
+		mode   string
+		events []eventView
+		want   string
+	}{
+		{mode: "newest", events: []eventView{{Event: Event{TxID: "old", SeenAt: older}}, {Event: Event{TxID: "new", SeenAt: newer}}}, want: "new"},
+		{mode: "oldest", events: []eventView{{Event: Event{TxID: "old", SeenAt: older}}, {Event: Event{TxID: "new", SeenAt: newer}}}, want: "old"},
+		{mode: "largest", events: []eventView{{Event: Event{TxID: "small", Received: 10}}, {Event: Event{TxID: "large", Sent: 20}}}, want: "large"},
+		{mode: "smallest", events: []eventView{{Event: Event{TxID: "small", Received: 10}}, {Event: Event{TxID: "large", Sent: 20}}}, want: "small"},
+		{mode: "incoming", events: []eventView{{Event: Event{TxID: "sent", Direction: "sent"}}, {Event: Event{TxID: "received", Direction: "received"}}}, want: "received"},
+		{mode: "outgoing", events: []eventView{{Event: Event{TxID: "received", Direction: "received"}}, {Event: Event{TxID: "sent", Direction: "sent"}}}, want: "sent"},
+		{mode: "mempool", events: []eventView{{Event: Event{TxID: "confirmed", Height: 10}}, {Event: Event{TxID: "mempool"}}}, want: "mempool"},
+		{mode: "confirmed", events: []eventView{{Event: Event{TxID: "mempool"}}, {Event: Event{TxID: "confirmed", Height: 10}}}, want: "confirmed"},
+	}
+	for _, test := range tests {
+		t.Run(test.mode, func(t *testing.T) {
+			sortTransactionEvents(test.events, test.mode)
+			if test.events[0].TxID != test.want {
+				t.Fatalf("sort %s placed %s first; want %s", test.mode, test.events[0].TxID, test.want)
+			}
+		})
+	}
+}
+
+func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mempoolURLs = []string{"http://mempool.local"}
+	a.state.Groups = []WatchGroup{{ID: "group", Label: "savings", Category: "cold", Source: "bulk-address-list", ScriptType: "collection", Count: 1}}
+	a.state.Watches = []Watch{{ID: "watch", GroupID: "group", Confirmed: 200_000_000, Initialized: true, LastTxID: "tx-204", LastTxAt: time.Unix(204, 0).UTC()}}
+	for index := 0; index < 205; index++ {
+		a.state.Events = append(a.state.Events, Event{
+			WatchID:              "watch",
+			GroupID:              "group",
+			TxID:                 fmt.Sprintf("tx-%03d", index),
+			Direction:            "received",
+			Received:             uint64(index + 1),
+			Net:                  int64(index + 1),
+			Height:               int64(index + 1),
+			Runestone:            index == 100,
+			Inscriptions:         map[bool]int{true: 2}[index == 100],
+			OPReturn:             map[bool][]string{true: {"history note"}}[index == 100],
+			SpentAddresses:       map[bool][]string{true: {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"}}[index == 100],
+			DestinationAddresses: map[bool][]string{true: {"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"}}[index == 100],
+			SeenAt:               time.Unix(int64(index), 0).UTC(),
+		})
+	}
+	indexResponse := httptest.NewRecorder()
+	a.index(indexResponse, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(indexResponse.Body.String(), `href="/groups/group/transactions">Show all transactions`) {
+		t.Fatal("watch row did not render its transaction-history link")
+	}
+	request := httptest.NewRequest(http.MethodGet, "/groups/group/transactions?sort=oldest&page=2", nil)
+	request.SetPathValue("id", "group")
+	response := httptest.NewRecorder()
+	a.groupTransactions(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", response.Code, body)
+	}
+	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From watched address", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "To address", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "http://mempool.local", "2 BTC"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("history page is missing %q", expected)
+		}
+	}
+	for _, excluded := range []string{"tx-099", "tx-200"} {
+		if strings.Contains(body, excluded) {
+			t.Fatalf("history page included event outside page two: %s", excluded)
+		}
+	}
+	if count := strings.Count(body, "class=\"transaction-card\""); count != 100 {
+		t.Fatalf("history page rendered %d transactions; want 100", count)
+	}
+}
+
+func TestTransactionHistoryPrivacyModeMasksAmountsAndTxIDs(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txID := strings.Repeat("a", 64)
+	receivedAddress := "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+	destinationAddress := "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"
+	a.state = state{
+		PrivacyMode: true,
+		Groups:      []WatchGroup{{ID: "group", Label: "savings", Category: "cold", Source: "address", ScriptType: "address", Count: 1}},
+		Watches:     []Watch{{ID: "watch", GroupID: "group", Confirmed: 200_000_000, Initialized: true}},
+		Events:      []Event{{WatchID: "watch", GroupID: "group", TxID: txID, Direction: "self-transfer", Received: 200_000_000, Net: 200_000_000, ReceivedAddresses: []string{receivedAddress}, SpentAddresses: []string{receivedAddress}, DestinationAddresses: []string{destinationAddress}, SeenAt: time.Now()}},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/groups/group/transactions", nil)
+	request.SetPathValue("id", "group")
+	response := httptest.NewRecorder()
+	a.groupTransactions(response, request)
+	body := response.Body.String()
+	for _, secret := range []string{txID, receivedAddress, destinationAddress, "2 BTC", "200000000"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("privacy history exposed %q", secret)
+		}
+	}
+	if !strings.Contains(body, maskIdentifier(txID)) || !strings.Contains(body, maskIdentifier(receivedAddress)) || !strings.Contains(body, maskIdentifier(destinationAddress)) || !strings.Contains(body, "masked") {
+		t.Fatal("privacy history did not render masked values")
+	}
+}
+
+func TestTransactionHistoryListsPendingElectrsDetails(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txID := strings.Repeat("b", 64)
+	a.state = state{
+		Groups:  []WatchGroup{{ID: "group", Label: "archive", Category: "old", Source: "address", ScriptType: "address", Count: 1}},
+		Watches: []Watch{{ID: "watch", GroupID: "group", Initialized: true}},
+		Events:  []Event{{WatchID: "watch", GroupID: "group", TxID: txID, Height: 800_000, Direction: "activity", DetailsPending: true, Historical: true, SeenAt: time.Now()}},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/groups/group/transactions", nil)
+	request.SetPathValue("id", "group")
+	response := httptest.NewRecorder()
+	a.groupTransactions(response, request)
+	body := response.Body.String()
+	for _, expected := range []string{"1</strong> transaction", txID, "Indexed transaction", "Details pending", "Full details will be retried"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("pending history is missing %q: %s", expected, body)
+		}
+	}
+	if strings.Contains(body, "No transactions were returned") {
+		t.Fatal("pending Electrs transaction was rendered as an empty history")
+	}
+}
+
+func TestHistoryImportNotificationClassification(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		initialized bool
+		known       bool
+		want        bool
+	}{
+		{name: "initial scan", initialized: false, known: false, want: false},
+		{name: "upgrade backfill", initialized: true, known: true, want: false},
+		{name: "new transaction", initialized: true, known: false, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shouldNotifyHistoryEvent(test.initialized, test.known); got != test.want {
+				t.Fatalf("got %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 
@@ -703,8 +913,8 @@ func TestCombineGroupsMergesHistoryAndPreservesNotes(t *testing.T) {
 		{ID: "watch-two", GroupID: "two", Label: "second", Address: "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"},
 	}
 	a.state.Events = []Event{
-		{WatchID: "watch-one", GroupID: "one", TxID: "shared", Direction: "received", Received: 10, Net: 10, OPReturn: []string{"hello"}, ReceivedAddresses: []string{"address-one"}},
-		{WatchID: "watch-two", GroupID: "two", TxID: "shared", Direction: "sent", Sent: 3, Net: -3, Runestone: true, ReceivedAddresses: []string{"address-two"}},
+		{WatchID: "watch-one", GroupID: "one", TxID: "shared", Direction: "received", Received: 10, Net: 10, OPReturn: []string{"hello"}, ReceivedAddresses: []string{"address-one"}, Historical: true, DetailsVersion: 1},
+		{WatchID: "watch-two", GroupID: "two", TxID: "shared", Direction: "sent", Sent: 3, Net: -3, Runestone: true, ReceivedAddresses: []string{"address-two"}, SpentAddresses: []string{"address-three"}, DestinationAddresses: []string{"address-four"}, DetailsVersion: 1},
 	}
 	form := url.Values{"group_ids": {"one", "two"}, "label": {"Combined Archive"}, "category": {"Long Term"}}
 	request := httptest.NewRequest(http.MethodPost, "/groups/combine", strings.NewReader(form.Encode()))
@@ -730,8 +940,56 @@ func TestCombineGroupsMergesHistoryAndPreservesNotes(t *testing.T) {
 		t.Fatalf("shared transaction was not consolidated: %+v", a.state.Events)
 	}
 	event := a.state.Events[0]
-	if event.GroupID != a.state.Groups[0].ID || event.Direction != "self-transfer" || event.Received != 10 || event.Sent != 3 || event.Net != 7 || !event.Runestone || !event.TelegramSent || !event.NostrSent || len(event.ReceivedAddresses) != 2 {
+	if event.GroupID != a.state.Groups[0].ID || event.WatchID != "watch-one" || event.Direction != "activity" || event.Received != 0 || event.Sent != 0 || event.Net != 0 || event.Runestone || !event.TelegramSent || !event.NostrSent || event.Historical || event.DetailsVersion != 0 || !event.DetailsPending || len(event.ReceivedAddresses) != 0 || len(event.SpentAddresses) != 0 || len(event.DestinationAddresses) != 0 {
 		t.Fatalf("unexpected consolidated event: %+v", event)
+	}
+}
+
+func TestCombineGroupsDeduplicatesOverlappingAddress(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+	scriptHash, err := bitcoin.ScriptHash(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCheck := time.Now().Add(-time.Hour)
+	newCheck := time.Now()
+	a.state.Groups = []WatchGroup{
+		{ID: "coinkite", Label: "coinkite products", Category: "hardware", Notes: "first note", Source: address, ScriptType: "address", Count: 1},
+		{ID: "seedsigner", Label: "seedsigner", Category: "hardware", Notes: "second note", Source: address, ScriptType: "address", Count: 1},
+	}
+	a.state.Watches = []Watch{
+		{ID: "watch-one", GroupID: "coinkite", Address: address, ScriptHash: scriptHash, Confirmed: 1_000, KnownTx: []string{"tx-one"}, Initialized: true, LastChecked: oldCheck},
+		{ID: "watch-two", GroupID: "seedsigner", Address: address, ScriptHash: scriptHash, Confirmed: 2_000, KnownTx: []string{"tx-one", "tx-two"}, Initialized: true, LastChecked: newCheck},
+	}
+	a.state.Events = []Event{
+		{WatchID: "watch-one", GroupID: "coinkite", TxID: "tx-one", Direction: "received", Received: 1_000, Net: 1_000, DetailsVersion: 1},
+		{WatchID: "watch-two", GroupID: "seedsigner", TxID: "tx-one", Direction: "received", Received: 1_000, Net: 1_000, DetailsVersion: 1},
+	}
+	form := url.Values{"group_ids": {"coinkite", "seedsigner"}, "label": {"hardware wallets"}, "category": {"devices"}}
+	request := httptest.NewRequest(http.MethodPost, "/groups/combine", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	a.combineGroups(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("combine status %d: %s", response.Code, response.Body.String())
+	}
+	if len(a.state.Groups) != 1 || a.state.Groups[0].Count != 1 || !strings.Contains(a.state.Groups[0].Notes, "first note") || !strings.Contains(a.state.Groups[0].Notes, "second note") {
+		t.Fatalf("overlapping groups were not preserved correctly: %+v", a.state.Groups)
+	}
+	if len(a.state.Watches) != 1 {
+		t.Fatalf("duplicate address remained after combine: %+v", a.state.Watches)
+	}
+	watch := a.state.Watches[0]
+	if watch.ID != "watch-one" || watch.Confirmed != 2_000 || len(watch.KnownTx) != 2 || watch.GroupID != a.state.Groups[0].ID {
+		t.Fatalf("canonical watch state was not merged: %+v", watch)
+	}
+	if len(a.state.Events) != 1 || a.state.Events[0].Received != 0 || !a.state.Events[0].DetailsPending || a.state.Events[0].WatchID != "watch-one" {
+		t.Fatalf("duplicate event was not queued for exact recalculation: %+v", a.state.Events)
 	}
 }
 
@@ -778,7 +1036,7 @@ func TestIndexIncludesManualConsolidationWarnings(t *testing.T) {
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	for _, expected := range []string{"textContent='Combine'", "Combine selected", "choice.hidden=true", "Select at least two watches", "Include group “", "Smart discovery for this group will stop.", "Existing history will not be resent", "confirm_multi"} {
+	for _, expected := range []string{"textContent='Combine'", "Combine selected", "cancelSelection.textContent='Cancel'", "cancelSelection.addEventListener('click',exitCombineSelection)", "item.checkbox.checked=false", "choice.hidden=true", "Select at least two watches", "Include group “", "Smart discovery for this group will stop.", "Existing history will not be resent", "confirm_multi"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("consolidation UI is missing %q: %s", expected, body)
 		}

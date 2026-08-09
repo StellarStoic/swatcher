@@ -69,22 +69,27 @@ type WatchGroup struct {
 }
 
 type Event struct {
-	WatchID           string    `json:"watchId"`
-	GroupID           string    `json:"groupId,omitempty"`
-	TxID              string    `json:"txid"`
-	Height            int64     `json:"height"`
-	Direction         string    `json:"direction"`
-	Received          uint64    `json:"received"`
-	Sent              uint64    `json:"sent"`
-	Net               int64     `json:"net"`
-	OPReturn          []string  `json:"opReturn,omitempty"`
-	Replaceable       bool      `json:"replaceable,omitempty"`
-	Runestone         bool      `json:"runestone,omitempty"`
-	Inscriptions      int       `json:"inscriptions,omitempty"`
-	ReceivedAddresses []string  `json:"receivedAddresses,omitempty"`
-	SeenAt            time.Time `json:"seenAt"`
-	TelegramSent      bool      `json:"telegramSent,omitempty"`
-	NostrSent         bool      `json:"nostrSent,omitempty"`
+	WatchID              string    `json:"watchId"`
+	GroupID              string    `json:"groupId,omitempty"`
+	TxID                 string    `json:"txid"`
+	Height               int64     `json:"height"`
+	Direction            string    `json:"direction"`
+	Received             uint64    `json:"received"`
+	Sent                 uint64    `json:"sent"`
+	Net                  int64     `json:"net"`
+	OPReturn             []string  `json:"opReturn,omitempty"`
+	Replaceable          bool      `json:"replaceable,omitempty"`
+	Runestone            bool      `json:"runestone,omitempty"`
+	Inscriptions         int       `json:"inscriptions,omitempty"`
+	ReceivedAddresses    []string  `json:"receivedAddresses,omitempty"`
+	SpentAddresses       []string  `json:"spentAddresses,omitempty"`
+	DestinationAddresses []string  `json:"destinationAddresses,omitempty"`
+	DetailsVersion       int       `json:"detailsVersion,omitempty"`
+	DetailsPending       bool      `json:"detailsPending,omitempty"`
+	Historical           bool      `json:"historical,omitempty"`
+	SeenAt               time.Time `json:"seenAt"`
+	TelegramSent         bool      `json:"telegramSent,omitempty"`
+	NostrSent            bool      `json:"nostrSent,omitempty"`
 }
 
 type state struct {
@@ -107,6 +112,7 @@ const defaultDiscoveryGap = 20
 const maxBulkAddresses = 10000
 const maxWatchFormBytes = 2 << 20
 const defaultTheme = "bitcoin-night"
+const currentEventDetailsVersion = 1
 
 var themes = map[string]bool{
 	"bitcoin-night": true,
@@ -166,12 +172,33 @@ type groupView struct {
 
 type eventView struct {
 	Event
-	DisplayAmount         string
-	DisplayTxID           string
-	ReuseCount            int
-	SmallDeposit          bool
-	CombinedGroups        int
-	SmallDepositThreshold uint64
+	DisplayAmount                string
+	DisplayReceived              string
+	DisplaySent                  string
+	DisplayNet                   string
+	DisplayTxID                  string
+	DisplayReceivedAddresses     []string
+	DisplaySpentAddresses        []string
+	DisplayDestinationAddresses  []string
+	ReuseCount                   int
+	SmallDeposit                 bool
+	CombinedGroups               int
+	DisplaySmallDepositThreshold string
+}
+
+type transactionPageData struct {
+	Group       groupView
+	Events      []eventView
+	PrivacyMode bool
+	Theme       string
+	SortMode    string
+	Page        int
+	TotalPages  int
+	TotalEvents int
+	PreviousURL string
+	NextURL     string
+	MempoolURLs []string
+	CSPNonce    string
 }
 
 type pageData struct {
@@ -242,6 +269,7 @@ type App struct {
 	client           *electrum.Client
 	interval         time.Duration
 	tmpl             *template.Template
+	transactionsTmpl *template.Template
 	notifier         notify.Sender
 	mempoolURLs      []string
 	authPath         string
@@ -261,6 +289,7 @@ func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) 
 	}
 	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}, mempoolURLs: parseMempoolURLs(os.Getenv("SWATCHER_MEMPOOL_URLS"))}
 	a.tmpl = template.Must(template.New("index").Funcs(template.FuncMap{"watchLabel": a.watchLabel}).Parse(indexHTML))
+	a.transactionsTmpl = template.Must(template.New("transactions").Parse(transactionsHTML))
 	if err := a.load(); err != nil {
 		return nil, err
 	}
@@ -278,6 +307,7 @@ func (a *App) Run(listen string) error {
 	mux.HandleFunc("GET /health", a.health)
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /", a.index)
+	protected.HandleFunc("GET /groups/{id}/transactions", a.groupTransactions)
 	protected.HandleFunc("POST /watches", a.addWatch)
 	protected.HandleFunc("POST /groups/{id}/update", a.updateGroup)
 	protected.HandleFunc("POST /groups/{id}/delete", a.deleteGroup)
@@ -327,7 +357,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			view.ReuseCount = 0
 		}
 		view.SmallDeposit = smallEnabled && event.Received > 0 && event.Received < smallThreshold
-		view.SmallDepositThreshold = smallThreshold
+		view.DisplaySmallDepositThreshold = formatBitcoinAmount(smallThreshold)
 		if combinedEnabled {
 			view.CombinedGroups = len(txGroups[event.TxID])
 			if view.CombinedGroups < 2 {
@@ -338,8 +368,13 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 			view.DisplayTxID = maskIdentifier(event.TxID)
 			view.DisplayAmount = legacyMask(8)
 		}
-		data.Events = append(data.Events, view)
+		if !event.Historical && !event.DetailsPending {
+			data.Events = append(data.Events, view)
+		}
 		for i := range data.Groups {
+			if event.DetailsPending {
+				continue
+			}
 			if data.Groups[i].ID == event.GroupID && event.SeenAt.After(data.Groups[i].LastActivity) {
 				data.Groups[i].LastActivity = event.SeenAt
 				data.Groups[i].ActivitySignal = movementSignal(event)
@@ -353,9 +388,9 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 		data.Groups[i].DisplaySource = data.Groups[i].Source
 		data.Groups[i].DisplayLastTxID = data.Groups[i].LastTxID
 		data.Groups[i].LastTxAgo = relativeTime(data.Groups[i].LastTxAt, time.Now())
-		data.Groups[i].DisplayBalance = fmt.Sprintf("%d sat", data.Groups[i].Confirmed)
+		data.Groups[i].DisplayBalance = formatSignedBitcoinAmount(data.Groups[i].Confirmed, false)
 		if data.Groups[i].Unconfirmed != 0 {
-			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%d pending)", data.Groups[i].Unconfirmed)
+			data.Groups[i].DisplayBalance += fmt.Sprintf(" (%s pending)", formatSignedBitcoinAmount(data.Groups[i].Unconfirmed, true))
 		}
 		if a.state.PrivacyMode {
 			if !data.Groups[i].Bulk && !data.Groups[i].Combined {
@@ -379,6 +414,214 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if err := a.tmpl.Execute(w, data); err != nil {
 		log.Printf("render: %v", err)
 	}
+}
+
+const transactionsPerPage = 100
+
+func (a *App) groupTransactions(w http.ResponseWriter, r *http.Request) {
+	groupID := r.PathValue("id")
+	sortMode := transactionSortMode(r.URL.Query().Get("sort"))
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	a.mu.RLock()
+	groups := a.groupViewsLocked()
+	groupIndex := -1
+	for index := range groups {
+		if groups[index].ID == groupID {
+			groupIndex = index
+			break
+		}
+	}
+	if groupIndex < 0 {
+		a.mu.RUnlock()
+		http.NotFound(w, r)
+		return
+	}
+	group := groups[groupIndex]
+	privacyMode := a.state.PrivacyMode
+	events := a.transactionEventViewsLocked(groupID)
+	theme := selectedTheme(a.state.Theme)
+	mempoolURLs := append([]string(nil), a.mempoolURLs...)
+	a.mu.RUnlock()
+
+	sortTransactionEvents(events, sortMode)
+	totalEvents := len(events)
+	totalPages := (totalEvents + transactionsPerPage - 1) / transactionsPerPage
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * transactionsPerPage
+	end := start + transactionsPerPage
+	if end > totalEvents {
+		end = totalEvents
+	}
+	events = events[start:end]
+
+	group.DisplayBalance = formatSignedBitcoinAmount(group.Confirmed, false)
+	if group.Unconfirmed != 0 {
+		group.DisplayBalance += fmt.Sprintf(" (%s pending)", formatSignedBitcoinAmount(group.Unconfirmed, true))
+	}
+	if privacyMode {
+		group.DisplayBalance = legacyMask(8)
+	}
+	data := transactionPageData{
+		Group:       group,
+		Events:      events,
+		PrivacyMode: privacyMode,
+		Theme:       theme,
+		SortMode:    sortMode,
+		Page:        page,
+		TotalPages:  totalPages,
+		TotalEvents: totalEvents,
+		MempoolURLs: mempoolURLs,
+		CSPNonce:    cspNonce(r),
+	}
+	baseURL := fmt.Sprintf("/groups/%s/transactions?sort=%s&page=", url.PathEscape(groupID), url.QueryEscape(sortMode))
+	if page > 1 {
+		data.PreviousURL = baseURL + strconv.Itoa(page-1)
+	}
+	if page < totalPages {
+		data.NextURL = baseURL + strconv.Itoa(page+1)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.transactionsTmpl.Execute(w, data); err != nil {
+		log.Printf("render transaction history: %v", err)
+	}
+}
+
+func (a *App) transactionEventViewsLocked(groupID string) []eventView {
+	reuseEnabled, smallEnabled, combinedEnabled, smallThreshold := privacyIndicatorSettings(a.state)
+	receiptCounts := map[string]int{}
+	txGroups := map[string]map[string]bool{}
+	for _, event := range a.state.Events {
+		if txGroups[event.TxID] == nil {
+			txGroups[event.TxID] = map[string]bool{}
+		}
+		txGroups[event.TxID][effectiveEventGroupID(event)] = true
+	}
+	views := make([]eventView, 0)
+	for _, event := range a.state.Events {
+		reuseCount := 0
+		for _, address := range event.ReceivedAddresses {
+			receiptCounts[address]++
+			if receiptCounts[address] > reuseCount {
+				reuseCount = receiptCounts[address]
+			}
+		}
+		if effectiveEventGroupID(event) != groupID {
+			continue
+		}
+		view := eventView{
+			Event:                        event,
+			DisplayAmount:                eventAmount(event),
+			DisplayReceived:              formatBitcoinAmount(event.Received),
+			DisplaySent:                  formatBitcoinAmount(event.Sent),
+			DisplayNet:                   formatSignedBitcoinAmount(event.Net, true),
+			DisplayTxID:                  event.TxID,
+			DisplayReceivedAddresses:     append([]string(nil), event.ReceivedAddresses...),
+			DisplaySpentAddresses:        append([]string(nil), event.SpentAddresses...),
+			DisplayDestinationAddresses:  append([]string(nil), event.DestinationAddresses...),
+			ReuseCount:                   reuseCount,
+			SmallDeposit:                 smallEnabled && event.Received > 0 && event.Received < smallThreshold,
+			DisplaySmallDepositThreshold: formatBitcoinAmount(smallThreshold),
+		}
+		if !reuseEnabled || view.ReuseCount < 2 {
+			view.ReuseCount = 0
+		}
+		if combinedEnabled {
+			view.CombinedGroups = len(txGroups[event.TxID])
+			if view.CombinedGroups < 2 {
+				view.CombinedGroups = 0
+			}
+		}
+		if a.state.PrivacyMode {
+			view.DisplayAmount = legacyMask(8)
+			view.DisplayReceived = legacyMask(8)
+			view.DisplaySent = legacyMask(8)
+			view.DisplayNet = legacyMask(8)
+			view.DisplayTxID = maskIdentifier(event.TxID)
+			view.DisplayReceivedAddresses = maskIdentifiers(event.ReceivedAddresses)
+			view.DisplaySpentAddresses = maskIdentifiers(event.SpentAddresses)
+			view.DisplayDestinationAddresses = maskIdentifiers(event.DestinationAddresses)
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func effectiveEventGroupID(event Event) string {
+	if event.GroupID != "" {
+		return event.GroupID
+	}
+	return event.WatchID
+}
+
+func transactionSortMode(value string) string {
+	switch value {
+	case "oldest", "largest", "smallest", "incoming", "outgoing", "mempool", "confirmed":
+		return value
+	default:
+		return "newest"
+	}
+}
+
+func sortTransactionEvents(events []eventView, mode string) {
+	sort.SliceStable(events, func(i, j int) bool {
+		left, right := events[i].Event, events[j].Event
+		switch mode {
+		case "oldest":
+			if !left.SeenAt.Equal(right.SeenAt) {
+				return left.SeenAt.Before(right.SeenAt)
+			}
+		case "largest", "smallest":
+			leftSize, rightSize := eventValueSize(left), eventValueSize(right)
+			if leftSize != rightSize {
+				if mode == "largest" {
+					return leftSize > rightSize
+				}
+				return leftSize < rightSize
+			}
+		case "incoming", "outgoing":
+			leftRank, rightRank := transactionDirectionRank(left.Direction, mode), transactionDirectionRank(right.Direction, mode)
+			if leftRank != rightRank {
+				return leftRank < rightRank
+			}
+		case "mempool", "confirmed":
+			leftPreferred := (left.Height == 0) == (mode == "mempool")
+			rightPreferred := (right.Height == 0) == (mode == "mempool")
+			if leftPreferred != rightPreferred {
+				return leftPreferred
+			}
+		}
+		if !left.SeenAt.Equal(right.SeenAt) {
+			return left.SeenAt.After(right.SeenAt)
+		}
+		return left.TxID < right.TxID
+	})
+}
+
+func eventValueSize(event Event) uint64 {
+	if event.Received > event.Sent {
+		return event.Received
+	}
+	return event.Sent
+}
+
+func transactionDirectionRank(direction, preferred string) int {
+	if (preferred == "incoming" && direction == "received") || (preferred == "outgoing" && direction == "sent") {
+		return 0
+	}
+	if direction == "self-transfer" {
+		return 1
+	}
+	return 2
 }
 
 func (a *App) requireAuth(next http.Handler) http.Handler {
@@ -552,10 +795,10 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		if existingGroupID == "" {
 			existingGroupID = existing.ID
 		}
-		owners[existing.Address] = existingGroupID
+		owners[watchIdentityKey(existing)] = existingGroupID
 	}
 	for _, candidate := range newWatches {
-		if existingGroupID := owners[candidate.Address]; existingGroupID != "" {
+		if existingGroupID := owners[watchIdentityKey(candidate)]; existingGroupID != "" {
 			overlaps[existingGroupID]++
 		}
 	}
@@ -929,19 +1172,19 @@ func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
 			selectedWatchIDs[watch.ID] = true
 		}
 	}
-	totalAddresses := 0
+	rawAddressCount := 0
 	hasMultiple := false
 	for _, id := range selectedIDs {
-		totalAddresses += addressCounts[id]
+		rawAddressCount += addressCounts[id]
 		if addressCounts[id] > 1 {
 			hasMultiple = true
 		}
 	}
-	if totalAddresses < 2 {
+	if rawAddressCount < 2 {
 		writeFormError(w, r, http.StatusBadRequest, "The selected watches do not contain enough addresses to combine.")
 		return
 	}
-	if totalAddresses > maxBulkAddresses {
+	if rawAddressCount > maxBulkAddresses {
 		writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("A combined watch may contain at most %d addresses.", maxBulkAddresses))
 		return
 	}
@@ -954,14 +1197,16 @@ func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newID := randomID()
-	for i := range a.state.Watches {
-		if !selected[a.state.Watches[i].GroupID] {
-			continue
-		}
-		a.state.Watches[i].GroupID = newID
-		a.state.Watches[i].Label = label
-		if a.state.Watches[i].Path != "" {
-			a.state.Watches[i].Label += " " + a.state.Watches[i].Path
+	mergedWatches, canonicalWatchID := mergeSelectedWatches(a.state.Watches, selected, newID, label)
+	if canonicalWatchID == "" {
+		writeFormError(w, r, http.StatusBadRequest, "The selected watches do not contain an address to combine.")
+		return
+	}
+	a.state.Watches = mergedWatches
+	totalAddresses := 0
+	for _, watch := range a.state.Watches {
+		if watch.GroupID == newID {
+			totalAddresses++
 		}
 	}
 	notifyMode, notifyMinimum, notifyAfter := inheritedNotificationRule(selectedGroups)
@@ -972,7 +1217,7 @@ func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.state.Groups = append(keptGroups, WatchGroup{ID: newID, Label: label, Category: category, Notes: notes, Source: "combined-address-list", ScriptType: "collection", Count: totalAddresses, CreatedAt: time.Now().UTC(), Combined: true, NotifyMode: notifyMode, NotifyMinimum: notifyMinimum, NotifyAfter: notifyAfter})
-	a.state.Events = consolidateEvents(a.state.Events, selected, selectedWatchIDs, newID)
+	a.state.Events = consolidateEvents(a.state.Events, selected, selectedWatchIDs, newID, canonicalWatchID)
 	if err := a.saveLocked(); err != nil {
 		writeFormError(w, r, http.StatusInternalServerError, "The selected watches could not be combined.")
 		return
@@ -984,6 +1229,61 @@ func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func mergeSelectedWatches(watches []Watch, selectedGroups map[string]bool, newGroupID, label string) ([]Watch, string) {
+	result := make([]Watch, 0, len(watches))
+	indexes := make(map[string]int)
+	canonicalWatchID := ""
+	for _, watch := range watches {
+		if !selectedGroups[watch.GroupID] {
+			result = append(result, watch)
+			continue
+		}
+		watch.GroupID = newGroupID
+		watch.Label = label
+		if watch.Path != "" {
+			watch.Label += " " + watch.Path
+		}
+		key := watchIdentityKey(watch)
+		if index, exists := indexes[key]; exists {
+			mergeWatchState(&result[index], watch)
+			continue
+		}
+		indexes[key] = len(result)
+		result = append(result, watch)
+		if canonicalWatchID == "" {
+			canonicalWatchID = watch.ID
+		}
+	}
+	return result, canonicalWatchID
+}
+
+func watchIdentityKey(watch Watch) string {
+	if watch.ScriptHash != "" {
+		return "script:" + watch.ScriptHash
+	}
+	if scriptHash, err := bitcoin.ScriptHash(watch.Address); err == nil {
+		return "script:" + scriptHash
+	}
+	return "address:" + strings.ToLower(strings.TrimSpace(watch.Address))
+}
+
+func mergeWatchState(target *Watch, duplicate Watch) {
+	target.KnownTx = appendUniqueStrings(target.KnownTx, duplicate.KnownTx...)
+	preferDuplicate := duplicate.LastChecked.After(target.LastChecked) || (!target.Initialized && duplicate.Initialized)
+	if preferDuplicate {
+		target.Confirmed = duplicate.Confirmed
+		target.Unconfirmed = duplicate.Unconfirmed
+		target.LastChecked = duplicate.LastChecked
+		target.LastError = duplicate.LastError
+	}
+	if duplicate.LastTxAt.After(target.LastTxAt) || (target.LastTxID == "" && duplicate.LastTxID != "") {
+		target.LastTxID = duplicate.LastTxID
+		target.LastTxHeight = duplicate.LastTxHeight
+		target.LastTxAt = duplicate.LastTxAt
+	}
+	target.Initialized = target.Initialized || duplicate.Initialized
 }
 
 func combinedNotes(groups []WatchGroup) string {
@@ -1023,7 +1323,7 @@ func inheritedNotificationRule(groups []WatchGroup) (string, uint64, int) {
 	return mode, minimum, after
 }
 
-func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[string]bool, newGroupID string) []Event {
+func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[string]bool, newGroupID, canonicalWatchID string) []Event {
 	result := make([]Event, 0, len(events))
 	indexes := make(map[string]int)
 	for _, event := range events {
@@ -1032,25 +1332,26 @@ func consolidateEvents(events []Event, selectedGroups, selectedWatchIDs map[stri
 			continue
 		}
 		event.GroupID = newGroupID
+		event.WatchID = canonicalWatchID
 		event.TelegramSent, event.NostrSent = true, true
 		if index, exists := indexes[event.TxID]; exists {
 			merged := &result[index]
-			merged.Received += event.Received
-			merged.Sent += event.Sent
-			merged.Net += event.Net
-			merged.Direction = direction(electrum.Effect{Received: merged.Received, Sent: merged.Sent})
-			merged.Replaceable = merged.Replaceable || event.Replaceable
-			merged.Runestone = merged.Runestone || event.Runestone
-			if event.Inscriptions > merged.Inscriptions {
-				merged.Inscriptions = event.Inscriptions
-			}
 			if event.Height > merged.Height {
 				merged.Height = event.Height
 			}
-			merged.OPReturn = appendUniqueStrings(merged.OPReturn, event.OPReturn...)
-			merged.ReceivedAddresses = appendUniqueStrings(merged.ReceivedAddresses, event.ReceivedAddresses...)
+			if merged.SeenAt.IsZero() || (!event.SeenAt.IsZero() && event.SeenAt.Before(merged.SeenAt)) {
+				merged.SeenAt = event.SeenAt
+			}
+			merged.Historical = merged.Historical && event.Historical
 			continue
 		}
+		event.Direction = "activity"
+		event.Received, event.Sent, event.Net = 0, 0, 0
+		event.OPReturn = nil
+		event.Replaceable, event.Runestone, event.Inscriptions = false, false, 0
+		event.ReceivedAddresses, event.SpentAddresses, event.DestinationAddresses = nil, nil, nil
+		event.DetailsVersion = 0
+		event.DetailsPending = true
 		indexes[event.TxID] = len(result)
 		result = append(result, event)
 	}
@@ -1069,6 +1370,14 @@ func appendUniqueStrings(values []string, additions ...string) []string {
 		}
 	}
 	return values
+}
+
+func maskIdentifiers(values []string) []string {
+	masked := make([]string, 0, len(values))
+	for _, value := range values {
+		masked = append(masked, maskIdentifier(value))
+	}
+	return masked
 }
 
 func (a *App) health(w http.ResponseWriter, r *http.Request) {
@@ -1094,6 +1403,8 @@ type pollResult struct {
 	groupID      string
 	snapshot     electrum.Snapshot
 	effects      map[string]electrum.Effect
+	eventTimes   map[string]time.Time
+	notifyNew    map[string]bool
 	lastTxID     string
 	lastTxHeight int64
 	lastTxAt     time.Time
@@ -1104,9 +1415,15 @@ type pollResult struct {
 func (a *App) poll() {
 	a.mu.RLock()
 	watches := append([]Watch(nil), a.state.Watches...)
+	eventVersions := make(map[string]int, len(a.state.Events))
+	for _, event := range a.state.Events {
+		eventVersions[effectiveEventGroupID(event)+"\x00"+event.TxID] = event.DetailsVersion
+	}
 	a.mu.RUnlock()
 	groupScripts := make(map[string][][]byte)
 	groupScriptAddresses := make(map[string]map[string]string)
+	groupKnown := make(map[string]map[string]bool)
+	groupInitialized := make(map[string]bool)
 	for _, watch := range watches {
 		groupID := watch.GroupID
 		if groupID == "" {
@@ -1120,6 +1437,13 @@ func (a *App) poll() {
 			}
 			groupScriptAddresses[groupID][string(script)] = watch.Address
 		}
+		if groupKnown[groupID] == nil {
+			groupKnown[groupID] = map[string]bool{}
+		}
+		for _, txID := range watch.KnownTx {
+			groupKnown[groupID][txID] = true
+		}
+		groupInitialized[groupID] = groupInitialized[groupID] || watch.Initialized
 	}
 	workerCount := 8
 	if len(watches) < workerCount {
@@ -1130,7 +1454,7 @@ func (a *App) poll() {
 	for worker := 0; worker < workerCount; worker++ {
 		go func() {
 			for watch := range jobs {
-				results <- a.fetchWatch(watch, groupScripts)
+				results <- a.fetchWatch(watch, groupScripts, eventVersions, groupKnown, groupInitialized)
 			}
 		}()
 	}
@@ -1165,31 +1489,41 @@ func (a *App) poll() {
 			known[txid] = true
 		}
 		for _, item := range result.snapshot.History {
-			if current.Initialized && !known[item.TxHash] {
-				if !a.eventExistsLocked(result.groupID, item.TxHash) {
-					effect := result.effects[item.TxHash]
-					receivedAddresses := make([]string, 0, len(effect.ReceivedScripts))
-					for _, script := range effect.ReceivedScripts {
-						if address := groupScriptAddresses[result.groupID][script]; address != "" {
-							receivedAddresses = append(receivedAddresses, address)
-						}
-					}
-					a.state.Events = append(a.state.Events, Event{
-						WatchID:           current.ID,
-						GroupID:           result.groupID,
-						TxID:              item.TxHash,
-						Height:            item.Height,
-						Direction:         direction(effect),
-						Received:          effect.Received,
-						Sent:              effect.Sent,
-						Net:               int64(effect.Received) - int64(effect.Sent),
-						OPReturn:          effect.OPReturn,
-						Replaceable:       effect.Replaceable,
-						Runestone:         effect.Runestone,
-						Inscriptions:      effect.Inscriptions,
-						ReceivedAddresses: receivedAddresses,
-						SeenAt:            result.checkedAt,
-					})
+			effect, hasEffect := result.effects[item.TxHash]
+			seenAt := result.eventTimes[item.TxHash]
+			if seenAt.IsZero() {
+				seenAt = result.checkedAt
+			}
+			eventIndex := a.eventIndexLocked(result.groupID, item.TxHash)
+			if eventIndex < 0 {
+				historical := !result.notifyNew[item.TxHash]
+				a.state.Events = append(a.state.Events, Event{
+					WatchID: current.ID, GroupID: result.groupID, TxID: item.TxHash, Height: item.Height,
+					Direction: "activity", DetailsPending: true, Historical: historical, SeenAt: seenAt,
+					TelegramSent: historical, NostrSent: historical,
+				})
+				eventIndex = len(a.state.Events) - 1
+			}
+			event := &a.state.Events[eventIndex]
+			event.Height = item.Height
+			if hasEffect {
+				receivedAddresses := addressesForScripts(effect.ReceivedScripts, groupScriptAddresses[result.groupID])
+				spentAddresses := addressesForScripts(effect.SpentScripts, groupScriptAddresses[result.groupID])
+				event.Direction = direction(effect)
+				event.Received = effect.Received
+				event.Sent = effect.Sent
+				event.Net = int64(effect.Received) - int64(effect.Sent)
+				event.OPReturn = effect.OPReturn
+				event.Replaceable = effect.Replaceable
+				event.Runestone = effect.Runestone
+				event.Inscriptions = effect.Inscriptions
+				event.ReceivedAddresses = receivedAddresses
+				event.SpentAddresses = spentAddresses
+				event.DestinationAddresses = effect.DestinationAddresses
+				event.DetailsVersion = currentEventDetailsVersion
+				event.DetailsPending = false
+				if !seenAt.IsZero() {
+					event.SeenAt = seenAt
 				}
 			}
 			if !known[item.TxHash] {
@@ -1222,13 +1556,13 @@ func (a *App) poll() {
 	a.deliverPending()
 }
 
-func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte) pollResult {
+func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVersions map[string]int, groupKnown map[string]map[string]bool, groupInitialized map[string]bool) pollResult {
 	groupID := watch.GroupID
 	if groupID == "" {
 		groupID = watch.ID
 	}
-	result := pollResult{watch: watch, groupID: groupID, effects: make(map[string]electrum.Effect), lastTxID: watch.LastTxID, lastTxHeight: watch.LastTxHeight, lastTxAt: watch.LastTxAt, checkedAt: time.Now().UTC()}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	result := pollResult{watch: watch, groupID: groupID, effects: make(map[string]electrum.Effect), eventTimes: make(map[string]time.Time), notifyNew: make(map[string]bool), lastTxID: watch.LastTxID, lastTxHeight: watch.LastTxHeight, lastTxAt: watch.LastTxAt, checkedAt: time.Now().UTC()}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	result.snapshot, result.err = a.client.Snapshot(ctx, watch.ScriptHash)
 	if result.err != nil {
@@ -1251,23 +1585,41 @@ func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte) pollResu
 	} else {
 		result.lastTxID, result.lastTxHeight, result.lastTxAt = "", 0, time.Time{}
 	}
-	if !watch.Initialized {
-		return result
-	}
-	known := make(map[string]bool, len(watch.KnownTx))
-	for _, txID := range watch.KnownTx {
-		known[txID] = true
-	}
 	for _, item := range result.snapshot.History {
-		if known[item.TxHash] {
+		key := groupID + "\x00" + item.TxHash
+		if eventVersions[key] >= currentEventDetailsVersion {
 			continue
+		}
+		result.notifyNew[item.TxHash] = shouldNotifyHistoryEvent(groupInitialized[groupID], groupKnown[groupID][item.TxHash])
+		if item.Height > 0 {
+			if blockTime, err := a.client.BlockTime(ctx, item.Height); err == nil {
+				result.eventTimes[item.TxHash] = blockTime
+			} else {
+				log.Printf("transaction time %s: %v", item.TxHash, err)
+			}
+		} else {
+			result.eventTimes[item.TxHash] = result.checkedAt
 		}
 		effect, err := a.client.TransactionEffect(ctx, item.TxHash, groupScripts[groupID])
 		if err != nil {
-			result.err = err
-			return result
+			log.Printf("transaction details %s: %v", item.TxHash, err)
+			continue
 		}
 		result.effects[item.TxHash] = effect
+	}
+	return result
+}
+
+func shouldNotifyHistoryEvent(groupInitialized, groupAlreadyKnew bool) bool {
+	return groupInitialized && !groupAlreadyKnew
+}
+
+func addressesForScripts(scripts []string, addresses map[string]string) []string {
+	result := make([]string, 0, len(scripts))
+	for _, script := range scripts {
+		if address := addresses[script]; address != "" {
+			result = appendUniqueStrings(result, address)
+		}
 	}
 	return result
 }
@@ -1337,7 +1689,7 @@ func (a *App) expandDiscoveryLocked() error {
 	gap := discoveryGap(a.state.DiscoveryGap)
 	addressOwners := make(map[string]string, len(a.state.Watches))
 	for _, watch := range a.state.Watches {
-		addressOwners[watch.Address] = watch.GroupID
+		addressOwners[watchIdentityKey(watch)] = watch.GroupID
 	}
 	for groupIndex := range a.state.Groups {
 		group := &a.state.Groups[groupIndex]
@@ -1377,19 +1729,20 @@ func (a *App) expandDiscoveryLocked() error {
 			continue
 		}
 		for _, child := range derived {
-			if owner, exists := addressOwners[child.Address]; exists {
-				if owner != group.ID {
-					group.DiscoveryError = "a newly derived address overlaps another watch"
-				}
-				continue
-			}
 			scriptHash, err := bitcoin.ScriptHash(child.Address)
 			if err != nil {
 				group.DiscoveryError = err.Error()
 				continue
 			}
+			candidate := Watch{Address: child.Address, ScriptHash: scriptHash}
+			if owner, exists := addressOwners[watchIdentityKey(candidate)]; exists {
+				if owner != group.ID {
+					group.DiscoveryError = "a newly derived address overlaps another watch"
+				}
+				continue
+			}
 			a.state.Watches = append(a.state.Watches, Watch{ID: randomID(), GroupID: group.ID, Label: group.Label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
-			addressOwners[child.Address] = group.ID
+			addressOwners[watchIdentityKey(candidate)] = group.ID
 		}
 		if group.DiscoveryError == "" {
 			group.Count = desired
@@ -1458,6 +1811,9 @@ func (a *App) deliverPending() {
 		return
 	}
 	for _, event := range events {
+		if event.DetailsPending {
+			continue
+		}
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
 			continue
 		}
@@ -1489,17 +1845,21 @@ func (a *App) deliverPending() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		tg, nr := event.TelegramSent, event.NostrSent
 		if c.TelegramEnabled && !tg {
+			log.Printf("notification send started: channel=telegram type=activity")
 			if e := a.notifier.Telegram(ctx, c, msg); e != nil {
-				log.Printf("Telegram delivery failed: %v", e)
+				log.Printf("notification send failed: channel=telegram type=activity error=%v", e)
 			} else {
 				tg = true
+				log.Printf("notification send succeeded: channel=telegram type=activity")
 			}
 		}
 		if c.NostrEnabled && !nr {
+			log.Printf("notification send started: channel=nostr protocol=nip17 type=activity")
 			if e := a.notifier.Nostr(ctx, c, msg); e != nil {
-				log.Printf("NIP-17 delivery failed: %v", e)
+				log.Printf("notification send failed: channel=nostr protocol=nip17 type=activity error=%v", e)
 			} else {
 				nr = true
+				log.Printf("notification send succeeded: channel=nostr protocol=nip17 type=activity")
 			}
 		}
 		cancel()
@@ -1537,6 +1897,9 @@ func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]s
 	a.mu.RUnlock()
 	ready := make([]Event, 0, len(events))
 	for _, event := range events {
+		if event.DetailsPending {
+			continue
+		}
 		if (!c.TelegramEnabled || event.TelegramSent) && (!c.NostrEnabled || event.NostrSent) {
 			continue
 		}
@@ -1557,19 +1920,23 @@ func (a *App) deliverDigest(c notify.Config, events []Event, labels map[string]s
 	tgSent, nrSent := false, false
 	if c.TelegramEnabled && lastTelegram != date {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		log.Printf("notification send started: channel=telegram type=digest")
 		if err := a.notifier.Telegram(ctx, c, message); err != nil {
-			log.Printf("Telegram digest failed: %v", err)
+			log.Printf("notification send failed: channel=telegram type=digest error=%v", err)
 		} else {
 			tgSent = true
+			log.Printf("notification send succeeded: channel=telegram type=digest")
 		}
 		cancel()
 	}
 	if c.NostrEnabled && lastNostr != date {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		log.Printf("notification send started: channel=nostr protocol=nip17 type=digest")
 		if err := a.notifier.Nostr(ctx, c, message); err != nil {
-			log.Printf("NIP-17 digest failed: %v", err)
+			log.Printf("notification send failed: channel=nostr protocol=nip17 type=digest error=%v", err)
 		} else {
 			nrSent = true
+			log.Printf("notification send succeeded: channel=nostr protocol=nip17 type=digest")
 		}
 		cancel()
 	}
@@ -1617,7 +1984,7 @@ func (a *App) markEventDelivery(event Event, telegram, nostr bool) {
 
 func digestMessage(events []Event, labels map[string]string, balances map[string]notificationBalance, tipHeight int64, mempoolOnion string) string {
 	var message strings.Builder
-	fmt.Fprintf(&message, "s/watcher daily digest: %d activities", len(events))
+	fmt.Fprintf(&message, "**s/watcher daily digest**\n\n**Activities:** %d", len(events))
 	limit := len(events)
 	if limit > 10 {
 		limit = 10
@@ -1628,7 +1995,7 @@ func digestMessage(events []Event, labels map[string]string, balances map[string
 		if label == "" {
 			label = "Bitcoin watch"
 		}
-		section := "\n\n———\n" + activityMessage(event, label, balances[event.GroupID], tipHeight, mempoolOnion)
+		section := "\n\n---\n\n" + activityMessage(event, label, balances[event.GroupID], tipHeight, mempoolOnion)
 		if utf8.RuneCountInString(message.String())+utf8.RuneCountInString(section) > 3800 {
 			break
 		}
@@ -1636,65 +2003,118 @@ func digestMessage(events []Event, labels map[string]string, balances map[string
 		included++
 	}
 	if len(events) > included {
-		fmt.Fprintf(&message, "\n\n…and %d more activities.", len(events)-included)
+		fmt.Fprintf(&message, "\n\n**More activities:** %d", len(events)-included)
 	}
 	return message.String()
 }
 
 func activityMessage(event Event, label string, balance notificationBalance, tipHeight int64, mempoolOnion string) string {
 	var message strings.Builder
-	fmt.Fprintf(&message, "s/watcher activity\nWatch: %s\nActivity: %s\nReceived: %d sat\nSent: %d sat\nNet change: %+d sat", label, notificationDirection(event.Direction), event.Received, event.Sent, event.Net)
+	fmt.Fprintf(&message, "**s/watcher activity**\n\n**Watch:** %s\n**Activity:** %s\n**Received:** %s\n**Sent:** %s\n**Net change:** %s", markdownText(label), notificationDirection(event.Direction), formatBitcoinAmount(event.Received), formatBitcoinAmount(event.Sent), formatSignedBitcoinAmount(event.Net, true))
 	if event.Height > 0 {
 		confirmations := int64(1)
 		if tipHeight >= event.Height {
 			confirmations = tipHeight - event.Height + 1
 		}
-		fmt.Fprintf(&message, "\nState: Confirmed · block %d · %d confirmation", event.Height, confirmations)
+		fmt.Fprintf(&message, "\n**State:** Confirmed · block %d · %d confirmation", event.Height, confirmations)
 		if confirmations != 1 {
 			message.WriteByte('s')
 		}
 	} else {
-		message.WriteString("\nState: Unconfirmed · mempool")
+		message.WriteString("\n**State:** Unconfirmed · mempool")
 	}
-	fmt.Fprintf(&message, "\nCurrent balance: %d sat", balance.Confirmed)
+	fmt.Fprintf(&message, "\n**Current balance:** %s", formatSignedBitcoinAmount(balance.Confirmed, false))
 	if balance.Unconfirmed != 0 {
-		fmt.Fprintf(&message, " · %+d sat pending", balance.Unconfirmed)
+		fmt.Fprintf(&message, " · %s pending", formatSignedBitcoinAmount(balance.Unconfirmed, true))
 	}
 	if event.Height == 0 && event.Replaceable && event.Direction == "received" {
-		message.WriteString("\nRBF: Replaceable — do not treat as final until confirmed.")
+		message.WriteString("\n**RBF:** Replaceable — do not treat as final until confirmed.")
 	}
 	if event.Runestone {
-		message.WriteString("\nRunes: Runestone detected")
+		message.WriteString("\n**Runes:** Runestone detected")
 	}
 	if event.Inscriptions > 0 {
-		fmt.Fprintf(&message, "\nInscriptions: %d inscription envelope", event.Inscriptions)
+		fmt.Fprintf(&message, "\n**Inscriptions:** %d inscription envelope", event.Inscriptions)
 		if event.Inscriptions != 1 {
 			message.WriteByte('s')
 		}
 		message.WriteString(" detected")
 	}
 	if len(event.OPReturn) > 0 {
-		message.WriteString("\nOP_RETURN:")
+		message.WriteString("\n**OP_RETURN:**")
 		limit := len(event.OPReturn)
 		if limit > 5 {
 			limit = 5
 		}
 		for _, value := range event.OPReturn[:limit] {
-			fmt.Fprintf(&message, "\n• %s", truncateRunes(value, 160))
+			fmt.Fprintf(&message, "\n• %s", markdownText(truncateRunes(value, 160)))
 		}
 		if len(event.OPReturn) > limit {
 			fmt.Fprintf(&message, "\n• …and %d more", len(event.OPReturn)-limit)
 		}
 	}
 	if !event.SeenAt.IsZero() {
-		fmt.Fprintf(&message, "\nDetected: %s", event.SeenAt.UTC().Format("2006-01-02 15:04 UTC"))
+		fmt.Fprintf(&message, "\n**Detected:** %s", event.SeenAt.UTC().Format("2006-01-02 15:04 UTC"))
 	}
 	if mempoolOnion != "" {
-		fmt.Fprintf(&message, "\nTransaction: %s/tx/%s", strings.TrimRight(mempoolOnion, "/"), url.PathEscape(event.TxID))
+		fmt.Fprintf(&message, "\n**Transaction:** %s/tx/%s", strings.TrimRight(mempoolOnion, "/"), url.PathEscape(event.TxID))
 	} else {
-		fmt.Fprintf(&message, "\nTransaction: %s", event.TxID)
+		fmt.Fprintf(&message, "\n**Transaction:** `%s`", markdownCode(event.TxID))
 	}
 	return message.String()
+}
+
+func markdownCode(value string) string {
+	return strings.NewReplacer("\\", "\\\\", "`", "\\`").Replace(value)
+}
+
+func markdownText(value string) string {
+	return strings.NewReplacer(
+		"\\", "\\\\",
+		"*", "\\*",
+		"_", "\\_",
+		"`", "\\`",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	).Replace(value)
+}
+
+func formatBitcoinAmount(sats uint64) string {
+	if sats < 1_000_000 {
+		return fmt.Sprintf("%d sat", sats)
+	}
+	whole := sats / 100_000_000
+	fraction := sats % 100_000_000
+	if fraction == 0 {
+		return fmt.Sprintf("%d BTC", whole)
+	}
+	fractionText := strings.TrimRight(fmt.Sprintf("%08d", fraction), "0")
+	return fmt.Sprintf("%d.%s BTC", whole, fractionText)
+}
+
+func formatSignedBitcoinAmount(sats int64, alwaysSign bool) string {
+	if sats < 0 {
+		magnitude := uint64(-(sats + 1)) + 1
+		return "-" + formatBitcoinAmount(magnitude)
+	}
+	prefix := ""
+	if alwaysSign {
+		prefix = "+"
+	}
+	return prefix + formatBitcoinAmount(uint64(sats))
 }
 
 func notificationDirection(direction string) string {
@@ -1765,16 +2185,20 @@ func notificationEligible(group WatchGroup, event Event, tipHeight int64) (eligi
 }
 
 func (a *App) eventExistsLocked(groupID, txID string) bool {
-	for _, event := range a.state.Events {
+	return a.eventIndexLocked(groupID, txID) >= 0
+}
+
+func (a *App) eventIndexLocked(groupID, txID string) int {
+	for index, event := range a.state.Events {
 		eventGroupID := event.GroupID
 		if eventGroupID == "" {
 			eventGroupID = event.WatchID
 		}
 		if eventGroupID == groupID && event.TxID == txID {
-			return true
+			return index
 		}
 	}
-	return false
+	return -1
 }
 
 func direction(effect electrum.Effect) string {
@@ -2111,11 +2535,11 @@ func legacyMask(length int) string {
 func eventAmount(event Event) string {
 	switch event.Direction {
 	case "received":
-		return fmt.Sprintf("+%d sat", event.Received)
+		return "+" + formatBitcoinAmount(event.Received)
 	case "sent":
-		return fmt.Sprintf("-%d sat", event.Sent)
+		return "-" + formatBitcoinAmount(event.Sent)
 	case "self-transfer":
-		return fmt.Sprintf("net %d sat · in %d / out %d", event.Net, event.Received, event.Sent)
+		return fmt.Sprintf("net %s · in %s / out %s", formatSignedBitcoinAmount(event.Net, false), formatBitcoinAmount(event.Received), formatBitcoinAmount(event.Sent))
 	default:
 		return "—"
 	}

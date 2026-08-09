@@ -40,6 +40,9 @@ over a network can obtain its corresponding source from the
 - Mark explicitly replaceable incoming mempool transactions with an amber
   BIP125 warning until they confirm.
 - Show balance and newly detected activity in a local web UI.
+- Display amounts below 1,000,000 sat in sat and amounts at or above that
+  threshold in BTC without floating-point rounding or unnecessary trailing
+  zeros.
 - Link visible transaction IDs to the optional StartOS-local Mempool service,
   matching Tor sessions to its onion interface and LAN sessions to its local
   interface.
@@ -48,7 +51,8 @@ over a network can obtain its corresponding source from the
 - Include tracked transaction details in immediate alerts and daily digests:
   direction, received/sent/net amounts, confirmation or RBF state, current
   balance, detection time, Runes and inscription markers, printable OP_RETURN
-  messages, and the transaction ID.
+  messages, and the transaction ID, formatted as readable Markdown with bold
+  labels and one detail per line.
 - Persist per-channel delivery state so restarts do not duplicate alerts.
 - Configure each watched wallet for all, incoming-only, outgoing-only, or no
   alerts, with a minimum sat amount and mempool/1/3/6-confirmation timing.
@@ -87,7 +91,9 @@ not turn historical transactions into new alerts.
 
 Choose **Combine** to enter selection mode. The previously hidden checkboxes
 then appear and the button becomes **Combine selected**, remaining disabled
-until at least two rows are selected. Choose 2–100 existing watches and then
+until at least two rows are selected. Choose **Cancel** at any time to leave
+selection mode, clear the checkboxes, and remain at the same scroll position.
+Choose 2–100 existing watches and then
 **Combine selected** to turn them into one fixed collection, up to 10,000 total
 addresses. This is useful when addresses were originally added one at a time.
 The dialog requests a new name and group and explicitly names every selected
@@ -99,6 +105,10 @@ collection. The operation cannot reconstruct the original grouping
 automatically. Existing transactions touching multiple selected watches are
 merged, and all existing history is suppressed from notification delivery so
 the operation cannot generate old alerts.
+If selected watches overlap on the same Bitcoin script, Combine retains one
+canonical address record, unions its known history, and asks StartOS-local
+Electrs to recalculate affected transactions once. This repairs legacy
+overlaps without doubling balances or activity amounts.
 
 Leave the new note empty to retain existing notes where possible. If every
 selected watch has the same notification rule, that rule is inherited. If the
@@ -223,6 +233,22 @@ block header fetched through StartOS-local Electrs; an unconfirmed transaction
 uses the time s/watcher first observes it. Privacy Mode masks the displayed
 transaction ID along with the other identifiers.
 
+**Show all transactions** beneath that latest transaction opens a dedicated
+history page for the watch group. s/watcher imports the complete history
+returned by the StartOS-local Electrs service, including transactions that
+predate adding the watch; imported history is never sent as a new notification.
+The page includes received, sent, and net amounts, watched input and receiving
+addresses, external destination addresses for outgoing transactions,
+confirmation or mempool state, RBF status, Runes and inscription markers,
+OP_RETURN text, transaction time, and the local transaction link. It
+sorts by newest or oldest time, largest or smallest value, incoming or outgoing
+direction, and mempool or confirmed state. Results are paginated at 100
+transactions per page, and Privacy Mode masks amounts, transaction IDs, and
+addresses before the page is rendered. A transaction returned by Electrs is
+listed immediately even if its inputs cannot yet be decoded; it is marked
+**Details pending**, retried on later scans, and withheld from notifications
+until its amounts and direction are known.
+
 When the optional Mempool dependency is installed and running, visible
 transaction IDs in both the watch status and activity table open that
 transaction in the Mempool service on the same StartOS server. s/watcher uses
@@ -292,10 +318,20 @@ transactions, Runes and inscription-envelope detections, and every printable
 OP_RETURN message retained by s/watcher (up to five per alert). If StartOS
 provides an onion interface for the optional local Mempool dependency, the
 transaction line uses its `/tx/` URL and is clickable in clients that recognize
-links. Without that onion interface, only the plain transaction ID is sent;
-s/watcher never inserts a clearnet explorer link. Daily digests use the same
+links. Without that onion interface, the transaction ID is formatted as an
+inline-code string so Telegram users can copy it easily; s/watcher never
+inserts a clearnet explorer link. Daily digests use the same
 details and stop before Telegram's message-size limit, reporting how many
-additional activities remain.
+additional activities remain. Telegram and Nostr messages use Markdown with a
+bold heading and field labels, with each tracked detail on its own line. Wallet
+names and transaction content are escaped before formatting so they cannot
+alter the message markup.
+StartOS logs record a privacy-safe started, succeeded, or failed entry for each
+Telegram or NIP-17 activity alert, daily digest, and requested test message.
+These delivery logs never include credentials, recipients, wallet metadata,
+addresses, transaction IDs, or message bodies.
+Amounts at or above 1,000,000 sat are shown in BTC in both the Web Interface and
+notifications; smaller amounts remain in sat.
 
 At container startup, a minimal bootstrap step grants the unprivileged
 `swatcher` process ownership of `/data`. The service then drops privileges
