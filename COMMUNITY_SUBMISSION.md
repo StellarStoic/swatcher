@@ -13,8 +13,8 @@ Community Registry. The authoritative process is the
 - [x] User-focused `instructions.md` with first-run and action guidance.
 - [x] Contribution and private security-reporting policies.
 - [x] Automated Go, TypeScript, SDK, and multi-architecture container checks.
-- [ ] GitHub Actions green on the release commit.
-- [ ] Release tag matches `v{upstream_version}_{downstream_revision}`.
+- [x] GitHub Actions green on the release commit.
+- [x] Release tag matches `v{upstream_version}_{downstream_revision}`.
 
 ## Local release checks
 
