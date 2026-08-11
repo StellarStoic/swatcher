@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:4',
+  version: '0.1.1:5',
   releaseNotes: {
     en_US:
-      'Makes every visible Bitcoin address in transaction history copyable with one click.',
+      'Prepares s/watcher for community distribution with complete StartOS package documentation, validation guidance, and repository policies.',
     de_DE:
-      'Macht jede sichtbare Bitcoin-Adresse im Transaktionsverlauf mit einem Klick kopierbar.',
+      'Bereitet s/watcher mit vollständiger StartOS-Paketdokumentation, Prüfanleitung und Repository-Richtlinien auf die Community-Veröffentlichung vor.',
   },
   migrations: {
     up: async () => {},

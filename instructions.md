@@ -1,333 +1,183 @@
 # s/watcher
 
-s/watcher privately monitors Bitcoin addresses for incoming and outgoing
-transactions using your own StartOS node, with optional notifications via
-NIP-17 encrypted Nostr messages or Telegram.
+## Documentation
 
-Copyleft 2026 StellarStoic. This is free software: everyone may use, study,
-review, copy, modify, and redistribute it under the GNU Affero General Public
-License, version 3 or (at your option) any later version. Modified and
-redistributed versions must preserve the license's source-sharing freedoms,
-including for users who interact with the software over a network. s/watcher
-is provided without warranty. The license and corresponding source code are
-available at <https://github.com/StellarStoic/swatcher>.
+- [Project documentation](https://github.com/StellarStoic/swatcher) — source,
+  technical reference, limitations, and issue tracker.
 
-## Set the web password
+## What you get on StartOS
 
-Before opening the Web Interface, run **Set Web Password** from the s/watcher
-service actions. Enter the same password twice; it must contain at least 5
-characters. s/watcher stores only an Argon2id hash. Changing the password later
-signs out every existing browser session.
+s/watcher provides a password-protected Web UI for watch-only Bitcoin activity.
+It reads balances, history, raw transactions, and block times from Electrs on
+the same StartOS server. Mempool adds optional private explorer links, and Tor
+can route NIP-17 delivery through onion relays.
 
-If you forget the password, select **Forgot password?** on the login page. Open
-s/watcher in StartOS, select **Actions**, and run **Set Web Password**. Setting
-a new password does not remove watches or change notification configuration.
+All persistent settings and watch data live in the service's StartOS volume and
+are included in backups.
 
-Open the **Web UI**, enter a label and one of the following, then select
-**Add watch**:
+## Getting set up
 
-- A Bitcoin mainnet address
-- A bulk list containing 2–10,000 unique Bitcoin mainnet addresses
-- An account-level `xpub`, `ypub`, or `zpub`
-- A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor
+1. Make sure the required Electrs service is installed, running, and fully
+   synchronized.
+2. Open **Actions → Set Web Password**. Enter the same password twice; it must
+   contain at least five characters.
+3. Start s/watcher and open **Web UI**.
+4. Add a name, group, optional note, and one supported watch source.
+5. Wait for the first local scan. Existing history establishes the baseline and
+   is not sent as new activity.
+6. Optionally open **Actions → Notifications** and configure Telegram, Nostr,
+   or both. Use each channel's test option after saving its settings.
 
-Use **Find address** to check whether a Bitcoin mainnet address is already part
-of any saved watch. The search reads only s/watcher's persisted local address
-records; it makes no Electrs, Mempool, block-explorer, or other network request.
-It covers individual and bulk addresses plus every xpub or descriptor child
-that s/watcher has already derived and stored. A match shows its wallet and
-group, derivation path, address type, source type, address-level balance, scan
-state, known transaction count, latest transaction, and note. Privacy Mode
-hides balances, notes, and transaction IDs. **Not found** means the address is
-outside current local coverage; it does not prove that the address cannot
-belong to an xpub beyond the configured discovery gap.
+If you forget the Web UI password, run **Set Web Password** again. Replacing it
+signs out existing browser sessions but does not remove watches.
 
-For an address that is not found, select **Check address in local Mempool** to
-inspect its blockchain activity through your own StartOS Mempool service. The
-link prefers Mempool's onion interface and otherwise uses its private LAN
-interface. It never opens a public explorer. The link is shown only while the
-optional Mempool dependency is available.
+## Adding watches
 
-For a plain extended key, choose whether to include the `/1` change branch. A
-bare xpub does not identify its address type, so choose Legacy, Nested SegWit,
-Native SegWit, or Taproot when the selector appears. ypub and zpub formats
-identify their address type automatically; ordinary addresses do not require
-derivation settings.
+The Web UI accepts:
 
-For a list of existing addresses, select **Paste in bulk** and paste entries
-separated by lines, spaces, commas, or semicolons. Repeated entries in the same
-paste are removed. All addresses appear as one watch with one combined balance,
-activity history, note, and notification rule. If any entry is invalid or
-already watched, nothing is added. Bulk mode accepts mainnet addresses only,
-not xpubs, other extended keys, descriptors, private keys, or seed phrases.
-The initial StartOS-local Electrs scan may take time for very large lists.
+- A Bitcoin mainnet address.
+- An account-level `xpub`, `ypub`, or `zpub`.
+- A `pkh()`, `wpkh()`, `sh(wpkh())`, or `tr()` output descriptor.
+- A bulk list of between 2 and 10,000 unique mainnet addresses.
 
-To group watches that were already added, choose **Combine**. This reveals a
-checkbox beside each watch and changes the button to **Combine selected**. That
-button remains disabled until at least two rows are selected. Select **Cancel**
-to leave selection mode and clear the current choices without refreshing the
-page. Select between 2
-and 100 rows, containing no more than 10,000 addresses in total, and choose
-**Combine selected**. A row may represent one address or an entire xpub,
-descriptor, bulk, or previously combined group. The confirmation dialog names
-every multi-address group and asks whether it should be included.
-
-Consolidation creates one fixed address collection and cannot automatically
-restore the old grouping. Including an xpub or descriptor retains its currently
-discovered addresses but stops future smart discovery for that source. Existing
-history is merged and is never resent as new notifications. Leave the new note
-empty to retain existing notes where possible. Matching notification rules are
-inherited; differing rules disable notifications until the combined watch is
-edited.
-If selected watches contain the same address, s/watcher retains one canonical
-address record, preserves known history and notes, and recalculates affected
-transactions through local Electrs instead of counting the address twice.
-
-The watch list shows a small linked mainnet type label such as P2PKH,
-P2SH-P2WPKH, P2WPKH, P2WSH, or P2TR. Select **Edit** to change the address type
-for a bare xpub. This replaces its derived addresses and creates a fresh
-historical baseline, so older transactions are not sent as new notifications.
-The type is intentionally not editable for ypubs, zpubs, descriptors, or
-individual addresses because those inputs already determine it.
-
-s/watcher discovers wallet addresses automatically. Open **Actions → General →
-Smart Wallet Discovery** to set the number of consecutive unused addresses it
-keeps beyond the highest used index. The default is 20 and the allowed range is
-1–500. Larger gaps make more local Electrs queries. Reducing the setting never
-deletes addresses already discovered, and newly derived historical addresses
-are initialized without sending false activity notifications. The Web
-Interface warns if the 500-address-per-branch safety limit prevents satisfying
-the selected gap.
+A bare `xpub` does not identify its address type, so select Legacy, Nested
+SegWit, Native SegWit, or Taproot. `ypub`, `zpub`, descriptors, and individual
+addresses determine their type automatically. Enable the change branch when
+the imported wallet uses `/1` addresses.
 
 Descriptors must contain a public extended key and a non-hardened wildcard path
-ending in `/*`. Use `<0;1>` to cover both receive and change branches in one
-descriptor, for example `wpkh(xpub.../<0;1>/*)`. Descriptor paths override the
-form's address-type and change settings.
+ending in `/*`. A `<0;1>` expression covers receive and change branches.
+Hardened derivation below an xpub is not possible and is rejected.
 
-If an address or any derived wallet address is already covered by an existing
-watch, s/watcher adds nothing and identifies the conflicting watch in a modal.
-This prevents duplicated activity notifications.
+Names and groups are normalized to lowercase and may contain letters, numbers,
+spaces, and underscores. Notes accept up to 500 plain-text characters. Never
+paste a seed phrase, Bitcoin private key, WIF, or extended private key.
 
-Names and groups may contain letters, numbers, spaces, and underscores. They
-are converted to lowercase when saved, and repeated whitespace is collapsed.
-An optional wallet note can contain up to 500 characters of plain-text context
-and may use punctuation and multiple lines. Add it with a new watch or select
-**Edit** to change it. Never enter a Bitcoin private key or seed phrase;
-s/watcher rejects common secret-key and seed-phrase shapes. Privacy Mode masks
-notes, and StartOS backups include them with the rest of `/data/state.json`.
+### Smart discovery
 
-Open **Actions → General → Theme** to choose Bitcoin Night, Cypherpunk
-Neon, Arctic Node, Forest Ledger, or Paper Ledger. Colored swatches beside each
-name preview its palette. The saved theme applies to the login screen and Web
-Interface after the service restarts and persists through StartOS backups.
-Name and group tags are assigned readable light colors automatically. Matching
-text uses the same color regardless of capitalization.
-Previously saved valid groups appear as suggestions in the group field. In the
-watch list, select **Edit** to reveal the name and group inputs, **Save** to
-apply them, or **Cancel** to discard the unsaved values. Use **Sort by** to
-order watches by stack size, name, group, date added, latest change, or type.
+Extended keys and ranged descriptors derive addresses until the selected number
+of consecutive unused indexes exists beyond the highest used address. Change
+the gap with **Actions → General → Smart Wallet Discovery**. A larger gap finds
+wallets that skipped more indexes but makes more local Electrs queries.
 
-The same **Edit** panel controls notifications for that wallet. Choose every
-transaction, incoming only, outgoing only, or notifications off; set a minimum
-amount in satoshis; and choose mempool, 1, 3, or 6 confirmations. The default
-is every transaction immediately in the mempool. Confirmation-delayed alerts
-remain pending across service restarts.
+Discovery is bounded at 500 addresses per branch. Reducing the gap never deletes
+addresses already saved. Newly derived historical addresses are baselined
+without false notifications.
 
-In the **Notifications** action, enable quiet hours to defer immediate alerts
-between the selected start and end hours, or enable **Daily digest** to combine
-pending activity into one message per day. Enter the whole-hour offset from UTC
-for your local time. Quiet hours may cross midnight. A daily digest is sent at
-or after its selected local hour and is tracked separately for Telegram and
-Nostr so restarts do not duplicate it.
+### Bulk import and combine
 
-Open **Actions → General → Privacy Indicators** to control informational
-address-reuse, small-deposit, and combined-wallet badges. The small-deposit
-threshold defaults to 1,000 sat and is descriptive rather than a claim that an
-output is technically uneconomical to spend. Indicators use only local Electrs
-data and do not send notifications. Address-reuse counts cover receipts
-observed after this feature is installed.
+Select **Paste in bulk** to add addresses separated by whitespace, commas, or
+semicolons. The import is atomic: if any entry is invalid or already watched,
+nothing is added.
 
-The colored rail on the left of each watch summarizes its latest activity:
-gray means no movement or no net change, green means sats were added, and red
-means sats were drained.
+Select **Combine** to reveal selection boxes for existing watches. Choose at
+least two rows, then **Combine selected**. Combining creates one fixed address
+collection; combining an xpub or descriptor retains its current derived
+addresses but stops future discovery for that source. **Cancel** exits selection
+mode without changing anything.
 
-Each watch also shows the latest transaction found in its complete local
-Electrs history and how long ago it occurred. Confirmed transactions use their
-block-header time; unconfirmed transactions use the time s/watcher first sees
-them. Privacy Mode masks this transaction ID.
+## Transaction history
 
-Select **Show all transactions** below the latest transaction to open that
-watch group's complete history returned by your local Electrs service,
-including transactions from before the watch was added. Historical imports do
-not trigger notifications. The page shows 100 transactions at a time with
-previous and next navigation. Sort by newest or oldest, largest or smallest
-value, incoming or outgoing activity, or mempool and confirmed state. Each
-entry includes amounts, external input addresses for incoming transactions,
-watched input addresses and external destination addresses for outgoing
-transactions. Each address row shows the exact amount consumed from that input
-or sent to that output; repeated appearances of one address are summed. Values
-below one million sats use sats and larger values use BTC. Select any visible
-transaction address to copy it; Privacy Mode keeps masked addresses
-non-copyable. Entries also include transaction state and time, the local
-Mempool link when available, and any RBF, Runes, inscription,
-privacy-indicator, or OP_RETURN details already detected by s/watcher. Privacy
-Mode masks amounts, transaction IDs, and addresses on this page too.
-If Electrs returns a transaction ID but its full inputs cannot yet be decoded,
-the transaction remains visible as **Details pending**. s/watcher retries it on
-later scans and does not send an incomplete notification.
+Each watch shows its latest transaction. Select **Show all transactions** for
+the complete history returned by local Electrs, 100 entries per page. Sort by
+time, value, direction, or confirmation state.
 
-For incoming transactions, **From input address** is obtained from the previous
-output spent by each transaction input. Several input addresses may appear,
-and they do not prove a real-world sender identity. Inputs whose scripts cannot
-be represented as standard Bitcoin addresses are omitted. Existing transaction
-history is enriched with per-address amounts automatically after upgrading.
+Each transaction can show:
 
-If the optional Mempool dependency is installed and running, visible
-transaction IDs in the watch list and New activity table are links to your own
-Mempool service. When s/watcher is opened through Tor, it selects Mempool's
-onion interface; from LAN it selects a private local interface. It never sends
-the transaction ID to a public block explorer. Privacy Mode removes these links
-while transaction identifiers are masked.
+- Received, sent, and net amounts.
+- Input, watched-input, and destination addresses with their exact amounts.
+- Confirmation state, block height, time, and RBF status.
+- Printable UTF-8 OP_RETURN messages.
+- Detection-only Runes and Ordinals markers.
+- Address reuse, small-deposit, and combined-wallet information badges.
+- A link to the transaction in your optional local Mempool service.
 
-When newly detected activity contains a human-readable UTF-8 message in an
-OP_RETURN output, it appears beneath the transaction ID on a light gray label.
-Binary OP_RETURN protocol data is not displayed.
+Select any visible transaction address to copy it. Privacy Mode keeps masked
+addresses non-copyable. Input addresses identify previous outputs consumed by
+the transaction; they do not prove the identity of a real-world sender.
 
-New activity also shows a badge when its raw transaction contains a Runes
-runestone marker or one or more Ordinals inscription envelopes. Detection uses
-only your StartOS-local Electrs transaction data. s/watcher does not decode,
-render, fetch, or link the protocol content.
+Transactions whose inputs cannot yet be resolved remain visible as **Details
+pending** and are retried. Large histories may need several scan cycles.
 
-An incoming unconfirmed transaction that explicitly signals Replace-by-Fee
-shows an amber **Replaceable — do not treat as final until confirmed.** badge.
-The warning disappears after Electrs reports a block confirmation.
+## Find address
 
-The Web UI supports both StartOS LAN and Tor addresses. Same-origin actions
-remain accepted when the StartOS proxy presents a different internal hostname.
+Use **Find address** to search only the addresses already stored by s/watcher,
+including derived xpub and descriptor children. A match displays the watch,
+derivation path, address type, local balance, known history, and note.
 
-s/watcher checks your local Electrs service for confirmed and unconfirmed
-activity. Transactions touching multiple addresses in an imported wallet are
-combined into one event with exact received, sent, or self-transfer amounts.
-Mempool events update when they become confirmed.
+**Not found** means the address is outside saved coverage; it does not prove the
+address cannot belong to a wallet beyond the current discovery gap. When the
+optional Mempool dependency is available, you can open the address in your own
+Mempool instance. s/watcher never substitutes a public explorer.
 
-The first successful check establishes the initial state. Later transactions
-are recorded as activity. Removing a watch also removes its locally stored
-activity.
+## Notification rules
 
-Open the StartOS **Privacy Mode** action under **General** to control persistent
-masking. Set the Web Password before enabling privacy mode. Disabling privacy
-mode requires entering that password. Privacy mode replaces balances and
-activity amounts with randomized Unicode Symbols for Legacy Computing and masks
-addresses, extended keys, descriptors, transaction IDs, and the displayed Nostr
-npub except for their first and last four characters. The masking is performed before the HTML is
-rendered. This setting affects the Web Interface only; Telegram and Nostr notification
-amounts remain visible.
+Select **Edit** on a watch to configure:
 
-Never enter a seed phrase or private key. s/watcher accepts only public data and
-cannot spend funds. An xpub or descriptor reveals the wallet's complete public
-transaction graph, so protect access to the service and its backups.
+- Every transaction, incoming only, outgoing only, or notifications off.
+- A minimum activity amount.
+- Delivery in the mempool or after 1, 3, or 6 confirmations.
 
-## Notifications
+Open **Actions → Notifications** to configure immediate delivery, quiet hours,
+or one daily digest. Scheduling uses the whole-hour UTC offset entered there.
+Delivery status is saved separately for Telegram and Nostr to avoid resending a
+successfully delivered event after restart.
 
-Open the StartOS **Notifications** action to configure either channel:
+### Telegram
 
-- Telegram requires a BotFather bot token and recipient ID.
-- Nostr requires one or more `wss://` discovery relays and the receiver npub.
-  All private messages use NIP-17 gift wrapping. The receiver must publish a
-  kind 10050 DM relay list discoverable from the configured relays.
+1. Create a bot with Telegram's **@BotFather** and copy its token.
+2. Send that bot a direct message.
+3. Obtain your numeric user ID from Telegram's Bot API `getUpdates` response or
+   a trusted ID bot.
+4. Enter the bot token and your user ID as **Telegram recipient ID**.
+5. Save, reopen **Notifications**, enable the Telegram test option, and save
+   again.
 
-**Recipient npub** means your Nostr public key. Never enter your `nsec`: it is
-your secret private key. s/watcher rejects an nsec without saving it and asks
-for the corresponding npub. The sender nsec and npub fields explain that the
-generated values appear after Notifications is saved with Nostr enabled.
+A negative group chat ID may be used instead, but a group is not required for
+personal notifications.
 
-The Nostr relay field is prefilled with:
+### Nostr NIP-17
 
-- `wss://relay.damus.io`
-- `wss://nos.lol`
-- `wss://auth.nostr1.com`
-- `wss://relay.ditto.pub`
+1. Enter your receiver `npub`. Never enter your personal `nsec`.
+2. Keep or replace the default `wss://` relays. The receiver should publish a
+   kind `10050` DM relay list discoverable from them.
+3. Enable Nostr and save. s/watcher generates a dedicated sender identity,
+   unique name, and Pixelbot avatar.
+4. Reopen **Notifications** to view the generated sender `npub` and masked
+   sender `nsec`, or send a Nostr test message.
 
-You may edit this list. Leaving it empty restores these defaults. If Nostr test
-delivery still reports that the recipient has no kind 10050 relay list, open
-the receiving Nostr client and configure/publish its private-message relays;
-ordinary profile or outbox relays do not replace the NIP-17 kind 10050 list.
-Relays that request NIP-42 authentication are authenticated with s/watcher's
-dedicated sender identity. All recipient relays are attempted concurrently,
-and a failed test identifies the reason returned by each relay.
+The generated sender identity persists when Nostr is disabled and is restored
+with the service backup. It is an application messaging identity, not a Bitcoin
+key. NIP-17 protects message content, but public relays can still observe
+connection metadata.
 
-Tor is an optional s/watcher dependency. When StartOS Tor is installed and
-running, `.onion` relay connections use its internal SOCKS proxy while clearnet
-Nostr and Telegram connections remain direct. Tor is required when every relay
-in the recipient's kind 10050 list is an onion address.
+## Privacy and appearance actions
 
-### Telegram personal notifications
+- **Privacy Mode** masks balances, amounts, notes, addresses, extended keys,
+  descriptors, transaction IDs, and the displayed Nostr sender npub. Set the
+  web password first. Disabling Privacy Mode requires that password.
+- **Privacy Indicators** controls informational address-reuse, small-deposit,
+  and combined-wallet badges.
+- **Theme** selects Bitcoin Night, Cypherpunk Neon, Arctic Node, Forest Ledger,
+  or Paper Ledger.
 
-1. Create the bot with `@BotFather` and copy its token.
-2. Open the new bot's private chat and press **Start**, or send `/start`. A bot
-   cannot initiate a conversation until you do this once.
-3. On a trusted computer with `curl` and `jq`, run the commands below. Paste
-   the BotFather token only at the hidden prompt; do not put it directly in the
-   command or share the command output.
+Privacy Mode changes only the Web UI. Notification messages retain transaction
+amounts and details.
 
-   ```sh
-   read -rsp "Telegram bot token: " SWATCHER_TG_TOKEN; echo
-   curl --silent --show-error "https://api.telegram.org/bot${SWATCHER_TG_TOKEN}/getUpdates" \
-     | jq -r '.result[] | select(.message.chat.type == "private") | "\(.message.from.username // .message.from.first_name)\t\(.message.chat.id)"'
-   unset SWATCHER_TG_TOKEN
-   ```
+## Backups and sensitive data
 
-4. Copy the numeric ID shown beside your name into **Telegram recipient ID** in
-   the StartOS **Notifications** action. For a direct bot conversation, this is
-   your Telegram user ID and private-chat ID.
+StartOS backs up every persistent s/watcher file, including watches, derived
+addresses, history, password verifier, notification credentials, and the Nostr
+sender identity. Treat the backup as sensitive.
 
-If nothing is returned, send `/start` to the bot again and repeat the lookup.
-Groups are optional: to notify several people, add the bot to a group, send
-`/start@your_bot_username`, and use that update's negative group chat ID instead.
-Avoid third-party “ID finder” bots. The bot token is a secret: revoke it with
-`@BotFather` if it is ever exposed.
+s/watcher cannot spend Bitcoin, but an xpub or public descriptor reveals the
+wallet's transaction graph. Telegram tokens and the generated Nostr sender
+`nsec` also require protection.
 
-When Nostr is first enabled, the action immediately generates and persists a
-dedicated nsec/npub. Both keys appear as disabled fields after the action saves;
-the nsec is masked and neither key can be changed. The private sender key is
-generated randomly and stored internally. The default sender name
-is a unique `swatcher-xxxxxx` name and can be changed. Disabling Nostr preserves
-the identity. A DiceBear Pixelbot avatar is generated from the npub and rendered
-in the s/watcher Web UI; its URL is not shown as a form field. The name and
-avatar are published as the sender's Nostr profile without waiting for the
-first Bitcoin alert. Open the s/watcher Web Interface to see the generated
-Pixelbot avatar; StartOS 0.4 action forms cannot display an inline image in the
-Notifications settings.
+## Limitations
 
-Successful delivery is recorded separately for each channel. Failed deliveries
-are retried during later polling cycles without duplicating successful ones.
-Saving the **Notifications** action normally only stores the configuration. To
-verify a channel, enable and save it, reopen Notifications, select that
-channel's **Send test message after save** switch, and save once more. It sends:
-“You receive this message because you enabled Notifications in s/watcher.
-Consider this a test message.” The switch resets to off, delivery errors are
-shown immediately, and tests are not queued for automatic retry. Restarting
-s/watcher does not send another test.
-
-Activity notifications contain the watch name and group, incoming/outgoing or
-self-transfer direction, received and sent amounts, net change, confirmation
-state, current confirmed and pending balance, detection time, and the plain
-transaction ID. They also include an RBF warning for replaceable incoming
-mempool transactions, Runes and inscription-envelope detections, and printable
-OP_RETURN messages when present. Up to five OP_RETURN messages are included in
-one alert. Telegram and Nostr messages use Markdown with a bold heading and
-field labels, with each tracked detail on its own line.
-The Web Interface and notifications show amounts at or above 1,000,000 sat in
-BTC; smaller amounts remain in sat.
-
-When StartOS exposes an onion address for the optional local Mempool service,
-the transaction line becomes that local `/tx/` URL so Telegram and compatible
-Nostr clients can open it. If no Mempool onion interface is available, the
-transaction remains a non-linkable inline-code ID that is easy to copy in
-Telegram. s/watcher never substitutes a clearnet explorer. Daily digests
-contain the same details and summarize omitted events
-before reaching Telegram's message-size limit.
-The service logs every Telegram and NIP-17 send attempt and whether it
-succeeded or failed, identifying activity, digest, and test messages. Logs do
-not include credentials, recipients, wallet names, addresses, transaction IDs,
-or message content.
+- Bitcoin mainnet only.
+- Watch-only; no transaction construction, signing, or spending.
+- Runes and Ordinals are detected but not decoded or rendered.
+- Source input addresses are transaction-level evidence, not sender identity.
+- Large xpub histories and bulk groups can require multiple local scan cycles.
