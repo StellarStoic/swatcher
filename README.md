@@ -50,11 +50,11 @@ package is licensed under `AGPL-3.0-or-later`; see [LICENSE](LICENSE).
 The StartOS volume named `main` is mounted read-write at `/data`. Its important
 files are:
 
-| Path | Purpose |
-| --- | --- |
-| `/data/state.json` | Watches, derived addresses, activity, notification delivery state, privacy settings, and theme |
-| `/data/auth.json` | Argon2id password verifier and session-invalidating authentication state |
-| `/data/notifications.json` | Telegram configuration and the generated Nostr sender identity |
+| Path                       | Purpose                                                                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------- |
+| `/data/state.json`         | Watches, derived addresses, activity, notification delivery state, privacy settings, and theme |
+| `/data/auth.json`          | Argon2id password verifier and session-invalidating authentication state                       |
+| `/data/notifications.json` | Telegram configuration and the generated Nostr sender identity                                 |
 
 No wallet private keys or seed phrases are accepted. The Nostr sender key is an
 application identity generated solely for notifications; it is not a Bitcoin
@@ -74,22 +74,22 @@ lifecycle.
 
 ## Configuration management
 
-| StartOS-managed setting | Source |
-| --- | --- |
-| Web listen address | `SWATCHER_LISTEN` |
-| Persistent data directory | `SWATCHER_DATA` |
-| Electrs bridge endpoint | `ELECTRUM_ADDR` |
+| StartOS-managed setting               | Source                  |
+| ------------------------------------- | ----------------------- |
+| Web listen address                    | `SWATCHER_LISTEN`       |
+| Persistent data directory             | `SWATCHER_DATA`         |
+| Electrs bridge endpoint               | `ELECTRUM_ADDR`         |
 | Optional local Mempool interface URLs | `SWATCHER_MEMPOOL_URLS` |
-| Optional Tor SOCKS endpoint | `TOR_SOCKS_ADDR` |
+| Optional Tor SOCKS endpoint           | `TOR_SOCKS_ADDR`        |
 
 Wallets, web privacy preferences, notification rules, and UI themes are managed
 through the Web UI or StartOS actions and persist under `/data`.
 
 ## Network access and interfaces
 
-| Interface | Internal port | Protocol | Purpose |
-| --- | ---: | --- | --- |
-| Web UI (`ui`) | `8080` | HTTP | Password-protected watch dashboard and transaction history |
+| Interface     | Internal port | Protocol | Purpose                                                    |
+| ------------- | ------------: | -------- | ---------------------------------------------------------- |
+| Web UI (`ui`) |        `8080` | HTTP     | Password-protected watch dashboard and transaction history |
 
 No public application port is opened directly. StartOS exports the interface
 through its own LAN/Tor routing. Electrs traffic uses the private StartOS
@@ -99,14 +99,14 @@ dependency bridge.
 
 All actions are visible and available from the service page.
 
-| Action | ID | Purpose |
-| --- | --- | --- |
-| Set Web Password | `web-password` | Set or replace the password required by the Web UI; stores only an Argon2id verifier |
-| Notifications | `notifications` | Configure Telegram, NIP-17 Nostr, quiet hours, daily digest, and channel test messages |
-| Privacy Mode | `privacy-mode` | Persistently mask balances and identifiers; disabling requires the web password |
-| Privacy Indicators | `privacy-indicators` | Configure address-reuse, small-deposit, and combined-wallet information badges |
-| Smart Wallet Discovery | `smart-discovery` | Set the unused-address discovery gap for extended keys and ranged descriptors |
-| Theme | `theme` | Select the persistent Web UI color theme |
+| Action                 | ID                   | Purpose                                                                                |
+| ---------------------- | -------------------- | -------------------------------------------------------------------------------------- |
+| Set Web Password       | `web-password`       | Set or replace the password required by the Web UI; stores only an Argon2id verifier   |
+| Notifications          | `notifications`      | Configure Telegram, NIP-17 Nostr, quiet hours, daily digest, and channel test messages |
+| Privacy Mode           | `privacy-mode`       | Persistently mask balances and identifiers; disabling requires the web password        |
+| Privacy Indicators     | `privacy-indicators` | Configure address-reuse, small-deposit, and combined-wallet information badges         |
+| Smart Wallet Discovery | `smart-discovery`    | Set the unused-address discovery gap for extended keys and ranged descriptors          |
+| Theme                  | `theme`              | Select the persistent Web UI color theme                                               |
 
 ## Backups and restore
 
@@ -123,11 +123,11 @@ check before treating the dependency as ready.
 
 ## Dependencies
 
-| Service | Required | Purpose |
-| --- | --- | --- |
-| Electrs | Yes | Local Bitcoin address history, balance, raw transaction, and block-header queries |
-| Mempool | No | Private links from visible transaction IDs and unfound-address results to the local explorer |
-| Tor | No | SOCKS transport for NIP-17 delivery to onion relays |
+| Service | Required | Purpose                                                                                      |
+| ------- | -------- | -------------------------------------------------------------------------------------------- |
+| Electrs | Yes      | Local Bitcoin address history, balance, raw transaction, and block-header queries            |
+| Mempool | No       | Private links from visible transaction IDs and unfound-address results to the local explorer |
+| Tor     | No       | SOCKS transport for NIP-17 delivery to onion relays                                          |
 
 No dependency volume is mounted. Communication uses StartOS private bridge or
 interface discovery.

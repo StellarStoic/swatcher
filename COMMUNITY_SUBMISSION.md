@@ -9,12 +9,12 @@ Community Registry. The authoritative process is the
 - [x] Public GitHub repository.
 - [x] OSI-approved license and SPDX manifest identifier.
 - [x] Current `README.md` covering image, volume, interfaces, actions, backups,
-  health checks, dependencies, limitations, and AI quick reference.
+      health checks, dependencies, limitations, and AI quick reference.
 - [x] User-focused `instructions.md` with first-run and action guidance.
 - [x] Contribution and private security-reporting policies.
 - [x] Automated Go, TypeScript, SDK, and multi-architecture container checks.
-- [x] GitHub Actions green on the release commit.
-- [x] Release tag matches `v{upstream_version}_{downstream_revision}`.
+- [ ] GitHub Actions green on the release commit.
+- [ ] Release tag matches `v{upstream_version}_{downstream_revision}`.
 
 ## Local release checks
 
@@ -25,9 +25,9 @@ Community Registry. The authoritative process is the
 - [x] `node node_modules/@start9labs/start-sdk/lint.mjs`
 - [x] `npm run build`
 - [x] Multi-architecture container build succeeds.
-- [x] `start-cli s9pk pack --icon icon.svg` succeeds.
-- [x] The packed manifest has the intended version, git hash, license,
-  architectures, dependencies, and repository URLs.
+- [ ] `start-cli s9pk pack --icon icon.svg` succeeds.
+- [ ] The packed manifest has the intended version, git hash, license,
+      architectures, dependencies, and repository URLs.
 
 ## StartOS smoke test
 
