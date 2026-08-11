@@ -91,10 +91,13 @@ Each transaction can show:
 - Detection-only Runes and Ordinals markers.
 - Address reuse, small-deposit, and combined-wallet information badges.
 - A link to the transaction in your optional local Mempool service.
+- **Copy text** for a readable, branded summary containing the visible details.
+- **Save image** for a branded PNG transaction card you can share or archive.
 
 Select any visible transaction address to copy it. Privacy Mode keeps masked
-addresses non-copyable. Input addresses identify previous outputs consumed by
-the transaction; they do not prove the identity of a real-world sender.
+addresses non-copyable and keeps identifiers and amounts masked in both export
+formats. Input addresses identify previous outputs consumed by the transaction;
+they do not prove the identity of a real-world sender.
 
 Transactions whose inputs cannot yet be resolved remain visible as **Details
 pending** and are retried. Large histories may need several scan cycles.

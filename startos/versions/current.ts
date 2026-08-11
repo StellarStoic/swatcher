@@ -4,12 +4,12 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:5',
+  version: '0.1.1:6',
   releaseNotes: {
     en_US:
-      'Prepares s/watcher for community distribution with complete package documentation, automated validation, repository policies, and patched Go security dependencies.',
+      'Adds privacy-aware, branded transaction exports for copying readable text or saving a PNG image.',
     de_DE:
-      'Bereitet s/watcher mit vollständiger Paketdokumentation, automatischen Prüfungen, Repository-Richtlinien und aktualisierten Go-Sicherheitsabhängigkeiten auf die Community-Veröffentlichung vor.',
+      'Fügt datenschutzgerechte, gebrandete Transaktionsexporte zum Kopieren als lesbaren Text oder Speichern als PNG-Bild hinzu.',
   },
   migrations: {
     up: async () => {},

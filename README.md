@@ -145,7 +145,8 @@ s/watcher supports:
 - Confirmed and mempool activity, exact received/sent/net values, RBF status,
   printable OP_RETURN text, and lightweight Runes/Ordinals markers.
 - Complete transaction history with per-input/per-output address amounts,
-  sorting, pagination, local Mempool links, and copyable visible addresses.
+  sorting, pagination, local Mempool links, copyable visible addresses, and
+  privacy-aware branded text/PNG exports.
 - Local address ownership lookup across every address already stored for a
   watch, including derived children.
 
