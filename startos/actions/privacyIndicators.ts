@@ -17,7 +17,8 @@ const inputSpec = InputSpec.of({
   }),
   smallDepositThreshold: Value.number({
     name: 'Small-deposit threshold',
-    description: 'Incoming amounts below this value receive an informational badge',
+    description:
+      'Incoming amounts below this value receive an informational badge',
     required: true,
     default: 1000,
     integer: true,
@@ -51,20 +52,35 @@ export const privacyIndicators = sdk.Action.withInput(
       addressReuse: configured ? (state?.addressReuseIndicators ?? true) : true,
       smallDeposit: configured ? (state?.smallDepositIndicators ?? true) : true,
       smallDepositThreshold: state?.smallDepositThreshold ?? 1000,
-      combinedWallets: configured ? (state?.combinedWalletIndicators ?? true) : true,
+      combinedWallets: configured
+        ? (state?.combinedWalletIndicators ?? true)
+        : true,
     } satisfies PrivacyIndicatorsInput
   },
   async ({ effects, input }) => {
     const mounts = sdk.Mounts.of().mountVolume({
-      volumeId: 'main', subpath: null, mountpoint: '/data', readonly: false,
+      volumeId: 'main',
+      subpath: null,
+      mountpoint: '/data',
+      readonly: false,
     })
     const flag = (enabled: boolean) => (enabled ? 'enabled' : 'disabled')
-    await sdk.SubContainer.withTemp(effects, { imageId: 's-watcher' }, mounts, 'set-privacy-indicators', async (sub) => {
-      await sub.execFail([
-        'sh', '-c',
-        `s-watcher set-privacy-indicators ${input.smallDepositThreshold} ${flag(input.addressReuse)} ${flag(input.smallDeposit)} ${flag(input.combinedWallets)} && chown swatcher:swatcher /data/state.json`,
-      ], { user: 'root', env: { SWATCHER_DATA: '/data' } })
-    })
+    await sdk.SubContainer.withTemp(
+      effects,
+      { imageId: 's-watcher' },
+      mounts,
+      'set-privacy-indicators',
+      async (sub) => {
+        await sub.execFail(
+          [
+            'sh',
+            '-c',
+            `s-watcher set-privacy-indicators ${input.smallDepositThreshold} ${flag(input.addressReuse)} ${flag(input.smallDeposit)} ${flag(input.combinedWallets)} && chown swatcher:swatcher /data/state.json`,
+          ],
+          { user: 'root', env: { SWATCHER_DATA: '/data' } },
+        )
+      },
+    )
     await effects.restart()
   },
 )

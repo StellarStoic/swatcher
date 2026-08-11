@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a focused improvement to s/watcher
+title: '[Feature]: '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What problem should s/watcher solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired user experience without including real wallet data.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and resource considerations
+      description: Could this reveal wallet data, contact a third party, or increase Electrs workload?
