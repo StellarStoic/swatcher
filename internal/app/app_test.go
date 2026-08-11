@@ -332,7 +332,7 @@ func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", response.Code, body)
 	}
-	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC"} {
+	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC", "Copy text", "Save image", "transactionExportText", "Generated locally by s/watcher"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("history page is missing %q", expected)
 		}
