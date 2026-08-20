@@ -7,8 +7,9 @@ import {
   uniqueSenderName,
   validateRecipientNpub,
 } from '../nostrIdentity'
-import { torSocksBridge } from '../utils'
+import { i18n } from '../i18n'
 import { sdk } from '../sdk'
+import { torSocksBridge } from '../utils'
 
 const { InputSpec, Value } = sdk
 const defaultNostrRelays = [
@@ -19,131 +20,145 @@ const defaultNostrRelays = [
 ]
 const inputSpec = InputSpec.of({
   dailyDigest: Value.toggle({
-    name: 'Daily digest instead of immediate messages',
-    description: 'Combines pending wallet activity into one message per day',
+    name: i18n('Daily digest instead of immediate messages'),
+    description: i18n(
+      'Combines pending wallet activity into one message per day',
+    ),
     default: false,
   }),
   digestHour: Value.number({
-    name: 'Daily digest hour',
-    description: 'Hour of day using the UTC offset below',
+    name: i18n('Daily digest hour'),
+    description: i18n('Hour of day using the UTC offset below'),
     required: true,
     default: 9,
     integer: true,
     min: 0,
     max: 23,
-    units: 'hour',
+    units: i18n('hour'),
   }),
   quietHours: Value.toggle({
-    name: 'Enable quiet hours for immediate messages',
+    name: i18n('Enable quiet hours for immediate messages'),
     default: false,
   }),
   quietStart: Value.number({
-    name: 'Quiet hours start',
+    name: i18n('Quiet hours start'),
     required: true,
     default: 22,
     integer: true,
     min: 0,
     max: 23,
-    units: 'hour',
+    units: i18n('hour'),
   }),
   quietEnd: Value.number({
-    name: 'Quiet hours end',
+    name: i18n('Quiet hours end'),
     required: true,
     default: 7,
     integer: true,
     min: 0,
     max: 23,
-    units: 'hour',
+    units: i18n('hour'),
   }),
   utcOffset: Value.number({
-    name: 'Local UTC offset',
-    description: 'Whole-hour offset used for quiet hours and daily digests',
+    name: i18n('Local UTC offset'),
+    description: i18n(
+      'Whole-hour offset used for quiet hours and daily digests',
+    ),
     required: true,
     default: 0,
     integer: true,
     min: -12,
     max: 14,
-    units: 'hours',
+    units: i18n('hours'),
   }),
-  telegramEnabled: Value.toggle({ name: 'Enable Telegram', default: false }),
+  telegramEnabled: Value.toggle({
+    name: i18n('Enable Telegram'),
+    default: false,
+  }),
   telegramToken: Value.text({
-    name: 'Telegram bot token',
-    description: 'Token from BotFather',
+    name: i18n('Telegram bot token'),
+    description: i18n('Token from BotFather'),
     required: false,
     default: null,
     masked: true,
   }),
   telegramChatId: Value.text({
-    name: 'Telegram recipient ID',
-    description:
+    name: i18n('Telegram recipient ID'),
+    description: i18n(
       'Your user ID for personal alerts, or an optional negative group chat ID; see Instructions',
+    ),
     required: false,
     default: null,
   }),
   telegramTest: Value.dynamicToggle(async () => {
     const config = await notificationConfig.read().once()
     return {
-      name: 'Send Telegram test message after save',
-      description:
+      name: i18n('Send Telegram test message after save'),
+      description: i18n(
         'One-time test using the saved Telegram token and recipient ID',
+      ),
       default: false,
       disabled: config?.telegramEnabled
         ? false
-        : 'Enable Telegram and save Notifications first',
+        : i18n('Enable Telegram and save Notifications first'),
     }
   }),
   nostrEnabled: Value.toggle({
-    name: 'Enable Nostr NIP-17 messages',
+    name: i18n('Enable Nostr NIP-17 messages'),
     default: false,
   }),
   nostrRelays: Value.textarea({
-    name: 'Nostr relays',
-    description:
+    name: i18n('Nostr relays'),
+    description: i18n(
       'One wss:// relay per line, used for discovery and the sender copy',
+    ),
     required: false,
     default: defaultNostrRelays.join('\n'),
   }),
   nostrRecipient: Value.text({
-    name: 'Recipient npub (your Nostr public key)',
-    description: 'Only paste an npub here. Never paste your secret nsec.',
+    name: i18n('Recipient npub (your Nostr public key)'),
+    description: i18n('Only paste an npub here. Never paste your secret nsec.'),
     required: false,
     default: null,
     placeholder: 'npub1…',
   }),
   nostrSenderName: Value.text({
-    name: 'Sender name',
-    description:
+    name: i18n('Sender name'),
+    description: i18n(
       'A unique swatcher name is generated after saving unless you choose one',
+    ),
     required: true,
     default: 'swatcher',
   }),
   nostrSenderNsec: Value.dynamicText(async () => ({
-    name: 'Sender private key (nsec)',
-    description:
+    name: i18n('Sender private key (nsec)'),
+    description: i18n(
       'Generated and retained by s/watcher for use in another Nostr client. Will appear after save if Nostr is enabled.',
+    ),
     required: false,
     default: null,
     masked: true,
-    placeholder: 'Will appear after save if Nostr is enabled.',
-    disabled: 'Generated sender keys cannot be changed',
+    placeholder: i18n('Will appear after save if Nostr is enabled.'),
+    disabled: i18n('Generated sender keys cannot be changed'),
   })),
   nostrSenderNpub: Value.dynamicText(async () => ({
-    name: 'Sender public key (npub)',
-    description: 'Will appear after save if Nostr is enabled.',
+    name: i18n('Sender public key (npub)'),
+    description: i18n('Will appear after save if Nostr is enabled.'),
     required: false,
     default: null,
-    placeholder: 'Will appear after save if Nostr is enabled.',
-    disabled: 'Generated sender keys cannot be changed',
+    placeholder: i18n('Will appear after save if Nostr is enabled.'),
+    disabled: i18n('Generated sender keys cannot be changed'),
   })),
   nostrTest: Value.dynamicToggle(async () => {
     const config = await notificationConfig.read().once()
     return {
-      name: 'Send Nostr test message after save',
-      description: 'One-time NIP-17 test using the saved Nostr configuration',
+      name: i18n('Send Nostr test message after save'),
+      description: i18n(
+        'One-time NIP-17 test using the saved Nostr configuration',
+      ),
       default: false,
       disabled: config?.nostrEnabled
         ? false
-        : 'Enable Nostr and save Notifications first',
+        : i18n('Enable Nostr and save Notifications first'),
     }
   }),
 })
@@ -152,8 +167,8 @@ type NotificationInput = typeof inputSpec._TYPE
 export const notifications = sdk.Action.withInput(
   'notifications',
   {
-    name: 'Notifications',
-    description: 'Configure Telegram and private NIP-17 alerts',
+    name: i18n('Notifications'),
+    description: i18n('Configure Telegram and private NIP-17 alerts'),
     warning: null,
     allowedStatuses: 'any',
     group: null,
@@ -193,7 +208,9 @@ export const notifications = sdk.Action.withInput(
       : ''
     if (input.nostrEnabled && !nostrRecipient) {
       throw new Error(
-        'Enter your Nostr public key as an npub before enabling Nostr notifications.',
+        i18n(
+          'Enter your Nostr public key as an npub before enabling Nostr notifications.',
+        ),
       )
     }
     const previous = await notificationConfig.read().once()
@@ -277,6 +294,14 @@ export const notifications = sdk.Action.withInput(
           }
         },
       )
+    }
+    return {
+      version: '1',
+      title: i18n('Notification settings saved'),
+      message: i18n(
+        'Reopen Notifications to see the generated Nostr sender keys.',
+      ),
+      result: null,
     }
   },
 )

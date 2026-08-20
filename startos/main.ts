@@ -40,7 +40,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
       env: {
         SWATCHER_LISTEN: `:${uiPort}`,
         SWATCHER_DATA: '/data',
-        ELECTRUM_ADDR: electrum ?? '127.0.0.1:50001',
+        ELECTRUM_ADDR: electrum ?? '',
         SWATCHER_MEMPOOL_URLS: JSON.stringify(mempoolUrls),
         TOR_SOCKS_ADDR: torSocks ?? '',
       },

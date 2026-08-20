@@ -2,23 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { stateConfig } from '../fileModels/state.json'
+import { i18n } from '../i18n'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
 const inputSpec = InputSpec.of({
   addressReuse: Value.toggle({
-    name: 'Show address-reuse indicators',
-    description: 'Counts observed receipts to the same watched address',
+    name: i18n('Show address-reuse indicators'),
+    description: i18n('Counts observed receipts to the same watched address'),
     default: true,
   }),
   smallDeposit: Value.toggle({
-    name: 'Show small-deposit indicators',
+    name: i18n('Show small-deposit indicators'),
     default: true,
   }),
   smallDepositThreshold: Value.number({
-    name: 'Small-deposit threshold',
-    description:
+    name: i18n('Small-deposit threshold'),
+    description: i18n(
       'Incoming amounts below this value receive an informational badge',
+    ),
     required: true,
     default: 1000,
     integer: true,
@@ -27,8 +29,10 @@ const inputSpec = InputSpec.of({
     units: 'sat',
   }),
   combinedWallets: Value.toggle({
-    name: 'Show combined-wallet indicators',
-    description: 'Marks transactions involving more than one watched wallet',
+    name: i18n('Show combined-wallet indicators'),
+    description: i18n(
+      'Marks transactions involving more than one watched wallet',
+    ),
     default: true,
   }),
 })
@@ -37,8 +41,8 @@ type PrivacyIndicatorsInput = typeof inputSpec._TYPE
 export const privacyIndicators = sdk.Action.withInput(
   'privacy-indicators',
   {
-    name: 'Privacy Indicators',
-    description: 'Configure informational transaction privacy badges',
+    name: i18n('Privacy Indicators'),
+    description: i18n('Configure informational transaction privacy badges'),
     warning: null,
     allowedStatuses: 'any',
     group: 'General',
@@ -82,5 +86,13 @@ export const privacyIndicators = sdk.Action.withInput(
       },
     )
     await effects.restart()
+    return {
+      version: '1',
+      title: i18n('Privacy indicators saved'),
+      message: i18n(
+        'The Web Interface now shows the selected transaction badges.',
+      ),
+      result: null,
+    }
   },
 )

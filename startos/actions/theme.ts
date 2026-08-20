@@ -2,20 +2,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { stateConfig } from '../fileModels/state.json'
+import { i18n } from '../i18n'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
 const inputSpec = InputSpec.of({
   theme: Value.select({
-    name: 'Web Interface theme',
-    description: 'The color swatches beside each name preview its palette.',
+    name: i18n('Web Interface theme'),
+    description: i18n(
+      'The color swatches beside each name preview its palette.',
+    ),
     default: 'bitcoin-night',
     values: {
-      'bitcoin-night': '🟧 ⬛ Bitcoin Night',
-      cypherpunk: '🟪 🩷 Cypherpunk Neon',
-      arctic: '🟦 🩵 Arctic Node',
-      forest: '🟩 🟨 Forest Ledger',
-      paper: '⬜ 🟧 Paper Ledger',
+      'bitcoin-night': i18n('🟧 ⬛ Bitcoin Night'),
+      cypherpunk: i18n('🟪 🩷 Cypherpunk Neon'),
+      arctic: i18n('🟦 🩵 Arctic Node'),
+      forest: i18n('🟩 🟨 Forest Ledger'),
+      paper: i18n('⬜ 🟧 Paper Ledger'),
     },
   }),
 })
@@ -24,9 +27,10 @@ type ThemeInput = typeof inputSpec._TYPE
 export const theme = sdk.Action.withInput(
   'theme',
   {
-    name: 'Theme',
-    description:
+    name: i18n('Theme'),
+    description: i18n(
       'Choose the persistent appearance of the s/watcher Web Interface',
+    ),
     warning: null,
     allowedStatuses: 'any',
     group: 'General',
@@ -63,8 +67,10 @@ export const theme = sdk.Action.withInput(
     await effects.restart()
     return {
       version: '1',
-      title: 'Theme saved',
-      message: 'The selected theme now applies to the s/watcher Web Interface.',
+      title: i18n('Theme saved'),
+      message: i18n(
+        'The selected theme now applies to the s/watcher Web Interface.',
+      ),
       result: null,
     }
   },

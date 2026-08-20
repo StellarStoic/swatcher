@@ -31,10 +31,3 @@ application credentials and should also be treated as secrets.
 Reports about StartOS itself, Electrs, Mempool, Telegram, Nostr relays, or Tor
 should be sent to those projects unless the issue is caused by s/watcher's
 integration.
-
-## Build-tool advisories
-
-The repository records known npm audit findings and their runtime exposure in
-[COMMUNITY_SUBMISSION.md](COMMUNITY_SUBMISSION.md). A tooling-only finding is
-not silently presented as a clean audit, but it is distinguished from code
-included in the application container or compiled StartOS JavaScript bundle.

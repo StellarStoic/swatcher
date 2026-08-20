@@ -8,6 +8,9 @@ export const uiPort = 8080
 export const electrumPort = 50001
 export const torSocksPort = 9050
 
+// electrs and mempool are not npm dependencies of this package, so their host
+// ids are literals. electrs groups its plaintext Electrum port under host
+// `electrum`; mempool serves its web UI on host `main`, binding `webui`.
 export const electrumBridge = (effects: T.Effects) =>
   sdk.host
     .getBridgeAddress(effects, {
@@ -18,11 +21,12 @@ export const electrumBridge = (effects: T.Effects) =>
     })
     .const()
 
+export const mempoolHost = (effects: T.Effects) =>
+  sdk.host.get(effects, { packageId: 'mempool', hostId: 'main' }).const()
+
 export async function localMempoolUrls(effects: T.Effects): Promise<string[]> {
-  const host = await sdk.host
-    .get(effects, { packageId: 'mempool', hostId: 'main' })
-    .const()
-  const address = host?.bindings[8080]?.interfaces.webui?.addressInfo
+  const address = (await mempoolHost(effects))?.bindings[8080]?.interfaces.webui
+    ?.addressInfo
   if (!address) return []
 
   return address.nonLocal
@@ -35,13 +39,22 @@ export async function localMempoolUrls(effects: T.Effects): Promise<string[]> {
     .format('urlstring')
 }
 
-export async function torSocksBridge(
-  effects: T.Effects,
-): Promise<string | undefined> {
-  const host = await sdk.host
-    .get(effects, { packageId: 'tor', hostId: 'socks' })
+// Resolves null while Tor is absent, which is what the app wants: it routes
+// only .onion hosts through the proxy and leaves clearnet traffic direct.
+export const torSocksBridge = (effects: T.Effects) =>
+  sdk.host
+    .getBridgeAddress(effects, {
+      packageId: 'tor',
+      hostId: 'socks',
+      internalPort: torSocksPort,
+    })
     .const()
-  if (!host?.bindings[torSocksPort]) return undefined
 
-  return `${await sdk.getOsIp(effects)}:${torSocksPort}`
-}
+export const usesOnionRelay = (relays: readonly string[]) =>
+  relays.some((relay) => {
+    try {
+      return new URL(relay).hostname.toLowerCase().endsWith('.onion')
+    } catch {
+      return false
+    }
+  })

@@ -1,13 +1,14 @@
 // Copyleft 2026 StellarStoic
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import { i18n } from '../i18n'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
 const inputSpec = InputSpec.of({
   password: Value.text({
-    name: 'Web password',
-    description: 'At least 5 characters; stored only as an Argon2id hash',
+    name: i18n('Web password'),
+    description: i18n('At least 5 characters; stored only as an Argon2id hash'),
     required: true,
     default: null,
     masked: true,
@@ -15,7 +16,7 @@ const inputSpec = InputSpec.of({
     maxLength: 256,
   }),
   confirmPassword: Value.text({
-    name: 'Confirm web password',
+    name: i18n('Confirm web password'),
     required: true,
     default: null,
     masked: true,
@@ -27,10 +28,13 @@ const inputSpec = InputSpec.of({
 export const webPassword = sdk.Action.withInput(
   'web-password',
   {
-    name: 'Set Web Password',
-    description:
+    name: i18n('Set Web Password'),
+    description: i18n(
       'Set or replace the password required to open the s/watcher Web Interface',
-    warning: 'Changing the password signs out every existing browser session.',
+    ),
+    warning: i18n(
+      'Changing the password signs out every existing browser session.',
+    ),
     allowedStatuses: 'any',
     group: null,
     visibility: 'enabled',
@@ -39,7 +43,7 @@ export const webPassword = sdk.Action.withInput(
   async () => ({ password: '', confirmPassword: '' }),
   async ({ effects, input }) => {
     if (input.password !== input.confirmPassword) {
-      throw new Error('The passwords do not match.')
+      throw new Error(i18n('The passwords do not match.'))
     }
     const mounts = sdk.Mounts.of().mountVolume({
       volumeId: 'main',
@@ -69,8 +73,10 @@ export const webPassword = sdk.Action.withInput(
     )
     return {
       version: '1',
-      title: 'Web password saved',
-      message: 'Use the new password to open the s/watcher Web Interface.',
+      title: i18n('Web password saved'),
+      message: i18n(
+        'Use the new password to open the s/watcher Web Interface.',
+      ),
       result: null,
     }
   },

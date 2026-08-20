@@ -1,11 +1,8 @@
 version: 2
 updates:
+  # npm is deliberately absent: the fleet's update monitor owns the SDK and
+  # npm bumps for every package, and a second bot collides with it.
   - package-ecosystem: gomod
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-  - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
