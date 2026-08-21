@@ -2,8 +2,9 @@
 
 ## Documentation
 
-- [Project documentation](https://github.com/StellarStoic/swatcher) — source,
-  technical reference, limitations, and issue tracker.
+- [s/watcher](https://github.com/StellarStoic/swatcher) — the project's own
+  documentation: what each watch type accepts, how discovery works, and the
+  full list of supported descriptors.
 
 ## What you get on StartOS
 

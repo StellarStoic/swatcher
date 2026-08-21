@@ -2,13 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { setupManifest } from '@start9labs/start-sdk'
-import { electrsDescription, long, short } from './i18n'
+import {
+  electrsDescription,
+  long,
+  mempoolDescription,
+  short,
+  torDescription,
+} from './i18n'
 
 export const manifest = setupManifest({
   id: 's-watcher',
   title: 's/watcher',
   license: 'AGPL-3.0-or-later',
-  packageRepo: 'https://github.com/StellarStoic/swatcher',
+  packageRepo: 'https://github.com/Start9-Community/swatcher',
   upstreamRepo: 'https://github.com/StellarStoic/swatcher',
   marketingUrl: 'https://github.com/StellarStoic/swatcher',
   donationUrl: null,
@@ -35,8 +41,7 @@ export const manifest = setupManifest({
       },
     },
     mempool: {
-      description:
-        'Optional local transaction explorer used for private transaction links.',
+      description: mempoolDescription,
       optional: true,
       metadata: {
         title: 'Mempool',
@@ -44,8 +49,7 @@ export const manifest = setupManifest({
       },
     },
     tor: {
-      description:
-        'Optional Tor SOCKS proxy used to deliver NIP-17 messages to onion relays.',
+      description: torDescription,
       optional: true,
       metadata: {
         title: 'Tor',

@@ -2,21 +2,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { stateConfig } from '../fileModels/state.json'
+import { i18n } from '../i18n'
 import { sdk } from '../sdk'
 
 const { InputSpec, Value } = sdk
 const inputSpec = InputSpec.of({
   gap: Value.number({
-    name: 'Address discovery gap',
-    description:
+    name: i18n('Address discovery gap'),
+    description: i18n(
       'Consecutive unused addresses checked after the highest used address. Larger gaps make more Electrs queries.',
+    ),
     required: true,
     default: 20,
     integer: true,
     min: 1,
     max: 500,
     step: 1,
-    units: 'addresses',
+    units: i18n('addresses'),
   }),
 })
 type SmartDiscoveryInput = typeof inputSpec._TYPE
@@ -24,9 +26,10 @@ type SmartDiscoveryInput = typeof inputSpec._TYPE
 export const smartDiscovery = sdk.Action.withInput(
   'smart-discovery',
   {
-    name: 'Smart Wallet Discovery',
-    description:
+    name: i18n('Smart Wallet Discovery'),
+    description: i18n(
       'Configure how far s/watcher scans beyond the last used wallet address',
+    ),
     warning: null,
     allowedStatuses: 'any',
     group: 'General',
@@ -63,8 +66,13 @@ export const smartDiscovery = sdk.Action.withInput(
     await effects.restart()
     return {
       version: '1',
-      title: 'Discovery gap saved',
-      message: `s/watcher will keep ${input.gap} unused addresses beyond the highest used wallet address under observation.`,
+      title: i18n('Discovery gap saved'),
+      message: i18n(
+        's/watcher will keep ${gap} unused addresses beyond the highest used wallet address under observation.',
+        // String, not number: the SDK formats a numeric param through
+        // Intl.NumberFormat, which throws on the container's LANG=C.UTF-8.
+        { gap: String(input.gap) },
+      ),
       result: null,
     }
   },
