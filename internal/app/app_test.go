@@ -19,6 +19,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
+	swatcherassets "github.com/s-watcher/s-watcher"
 	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
 	"github.com/s-watcher/s-watcher/internal/notify"
@@ -539,6 +540,24 @@ func TestSecurityHeadersAndCrossSitePostProtection(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden || called {
 		t.Fatalf("fetch-metadata cross-site POST was not rejected: status=%d called=%v", response.Code, called)
+	}
+}
+
+func TestFaviconUsesPackageIcon(t *testing.T) {
+	response := httptest.NewRecorder()
+	serveFavicon(response, httptest.NewRequest(http.MethodGet, "/favicon.png", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("favicon content type = %q, want image/png", got)
+	}
+	if !bytes.Equal(response.Body.Bytes(), swatcherassets.IconPNG) {
+		t.Fatal("favicon response does not match the package icon")
+	}
+	if strings.Count(indexHTML+transactionsHTML, `rel="icon" type="image/png" href="/favicon.png"`) != 2 {
+		t.Fatal("application pages do not reference the package favicon")
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	swatcherassets "github.com/s-watcher/s-watcher"
 	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
 	"github.com/s-watcher/s-watcher/internal/notify"
@@ -336,6 +337,8 @@ func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) 
 
 func (a *App) Run(listen string) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /favicon.png", serveFavicon)
+	mux.HandleFunc("GET /favicon.ico", serveFavicon)
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /logout", a.logout)
@@ -352,6 +355,12 @@ func (a *App) Run(listen string) error {
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
 	return server.ListenAndServe()
+}
+
+func serveFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(swatcherassets.IconPNG)
 }
 
 func (a *App) findAddress(w http.ResponseWriter, r *http.Request) {
