@@ -81,7 +81,10 @@ mode without changing anything.
 
 Each watch shows its latest transaction. Select **Show all transactions** for
 the complete history returned by local Electrs, 100 entries per page. Sort by
-time, value, direction, or confirmation state.
+time, value, direction, or confirmation state. When a transaction contains more
+than 10 input and output address rows, s/watcher shows the first 10 and places a
+**Show N more addresses** button underneath. Use it to expand or collapse that
+transaction's complete address list.
 
 Each transaction can show:
 

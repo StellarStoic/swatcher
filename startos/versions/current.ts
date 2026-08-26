@@ -4,18 +4,18 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.1:6',
+  version: '0.1.2:0',
   releaseNotes: {
     en_US:
-      'Adds privacy-aware, branded transaction exports for copying readable text or saving a PNG image.',
+      'Collapses long transaction address lists to 10 rows, with an on-demand control to reveal the remaining addresses.',
     es_ES:
-      'Añade exportaciones de transacciones con marca y respetuosas con la privacidad, para copiar texto legible o guardar una imagen PNG.',
+      'Contrae las listas largas de direcciones de transacciones a 10 filas, con un control para mostrar las direcciones restantes.',
     de_DE:
-      'Fügt datenschutzgerechte, gebrandete Transaktionsexporte zum Kopieren als lesbaren Text oder Speichern als PNG-Bild hinzu.',
+      'Klappt lange Transaktionsadresslisten auf 10 Zeilen ein und zeigt die übrigen Adressen bei Bedarf an.',
     pl_PL:
-      'Dodaje eksport transakcji z zachowaniem prywatności i własnym oznaczeniem — do skopiowania jako czytelny tekst lub zapisania jako obraz PNG.',
+      'Zwija długie listy adresów transakcji do 10 wierszy i pozwala wyświetlić pozostałe adresy na żądanie.',
     fr_FR:
-      'Ajoute des exports de transaction personnalisés et respectueux de la vie privée, à copier sous forme de texte lisible ou à enregistrer en image PNG.',
+      'Réduit les longues listes d’adresses de transaction à 10 lignes, avec un bouton permettant d’afficher les adresses restantes.',
   },
   migrations: {
     up: async () => {},
