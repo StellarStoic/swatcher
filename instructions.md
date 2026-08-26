@@ -127,6 +127,8 @@ pending** and are retried. Large histories may need several scan cycles.
 Use **Find address** to search only the addresses already stored by s/watcher,
 including derived xpub and descriptor children. A match displays the watch,
 derivation path, address type, local balance, known history, and note.
+Selecting **Show wallet** centers the matching watch and softly highlights its
+row for five seconds. A newly added watch receives the same visual highlight.
 
 **Not found** means the address is outside saved coverage; it does not prove the
 address cannot belong to a wallet beyond the current discovery gap. When the

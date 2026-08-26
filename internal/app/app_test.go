@@ -784,6 +784,11 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") || !strings.Contains(body, "new URLSearchParams(new FormData(addForm))") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
+	for _, expected := range []string{"watch-focus-pulse 5s", "prefers-reduced-motion:reduce", "function focusWatchRow", "classList.add('watch-focus')", "},5000)", "focusWatchRow(document.getElementById('view-'+addedWatch)"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("watch focus feedback is missing %q", expected)
+		}
+	}
 }
 
 func TestAddWatchAcceptsBrowserMultipartForSingleAndBulk(t *testing.T) {
