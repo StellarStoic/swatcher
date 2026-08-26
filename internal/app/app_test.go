@@ -332,7 +332,7 @@ func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", response.Code, body)
 	}
-	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC", "Copy text", "Save image", "transactionExportText", "Generated locally by s/watcher", "addressPreviewLimit=10", "Show fewer addresses", "more '+(hiddenCount===1?'address':'addresses')"} {
+	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC", "Copy text", "Save image", "transactionExportText", "Generated locally by s/watcher", "addressPreviewLimit=10", "Show fewer addresses", "more '+(hiddenCount===1?'address':'addresses')", ".badge.rbf{max-width:100%;border-radius:6px"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("history page is missing %q", expected)
 		}
@@ -489,7 +489,7 @@ func TestTemplatesEscapeStoredValues(t *testing.T) {
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 {
+	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || !strings.Contains(body, ".rbf-warning{display:inline-block;max-width:100%") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 {
 		t.Fatalf("stored values were not safely HTML-escaped: %s", body)
 	}
 }

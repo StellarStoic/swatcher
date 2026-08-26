@@ -7,15 +7,15 @@ export const current = VersionInfo.of({
   version: '0.1.2:0',
   releaseNotes: {
     en_US:
-      'Collapses long transaction address lists to 10 rows, with an on-demand control to reveal the remaining addresses.',
+      'Collapses long transaction address lists to 10 rows and makes wrapped RBF warnings easier to read.',
     es_ES:
-      'Contrae las listas largas de direcciones de transacciones a 10 filas, con un control para mostrar las direcciones restantes.',
+      'Contrae las listas largas de direcciones a 10 filas y facilita la lectura de los avisos RBF largos.',
     de_DE:
-      'Klappt lange Transaktionsadresslisten auf 10 Zeilen ein und zeigt die übrigen Adressen bei Bedarf an.',
+      'Klappt lange Transaktionsadresslisten auf 10 Zeilen ein und verbessert die Lesbarkeit langer RBF-Warnungen.',
     pl_PL:
-      'Zwija długie listy adresów transakcji do 10 wierszy i pozwala wyświetlić pozostałe adresy na żądanie.',
+      'Zwija długie listy adresów do 10 wierszy i poprawia czytelność długich ostrzeżeń RBF.',
     fr_FR:
-      'Réduit les longues listes d’adresses de transaction à 10 lignes, avec un bouton permettant d’afficher les adresses restantes.',
+      'Réduit les longues listes d’adresses à 10 lignes et améliore la lisibilité des longs avertissements RBF.',
   },
   migrations: {
     up: async () => {},
