@@ -610,6 +610,9 @@ func TestSetDiscoveryGapPersistsValidatedValue(t *testing.T) {
 	if saved.DiscoveryGap != 37 {
 		t.Fatalf("saved discovery gap %d, want 37", saved.DiscoveryGap)
 	}
+	if err := SetDiscoveryGap(dataDir, 5_001); err != nil {
+		t.Fatalf("discovery gap remains artificially capped: %v", err)
+	}
 }
 
 func TestSetPrivacyIndicatorsPersistsSettings(t *testing.T) {
@@ -654,19 +657,41 @@ func TestPrivacyIndicatorsRenderAsInformationalBadges(t *testing.T) {
 	}
 }
 
-func TestSmartDiscoveryReportsUnsatisfiedSafetyLimit(t *testing.T) {
+func TestSmartDiscoveryExtendsBeyondFormerLimit(t *testing.T) {
+	master, err := hdkeychain.NewMaster([]byte("s-watcher unlimited discovery test"), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := master.Neuter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := bitcoin.DeriveAddresses(public.String(), "native-segwit", 500, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.state.DiscoveryGap = 20
-	a.state.Groups = []WatchGroup{{ID: "group", Source: "unused", ScriptType: "native-segwit", Count: 500}}
-	a.state.Watches = []Watch{{ID: "watch", GroupID: "group", Path: "m/0/499", Address: "address", KnownTx: []string{"used"}}}
+	a.state.Groups = []WatchGroup{{ID: "group", Source: public.String(), ScriptType: "native-segwit", Count: 500}}
+	for index, child := range derived {
+		scriptHash, hashErr := bitcoin.ScriptHash(child.Address)
+		if hashErr != nil {
+			t.Fatal(hashErr)
+		}
+		watch := Watch{ID: fmt.Sprintf("watch-%d", index), GroupID: "group", Path: child.Path, Address: child.Address, ScriptHash: scriptHash}
+		if index == 499 {
+			watch.KnownTx = []string{"used"}
+		}
+		a.state.Watches = append(a.state.Watches, watch)
+	}
 	if err := a.expandDiscoveryLocked(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(a.state.Groups[0].DiscoveryError, "500-address limit") {
-		t.Fatalf("missing discovery-limit warning: %q", a.state.Groups[0].DiscoveryError)
+	if a.state.Groups[0].Count != 520 || len(a.state.Watches) != 520 || a.state.Groups[0].DiscoveryError != "" {
+		t.Fatalf("smart discovery did not extend beyond 500: group=%+v watches=%d", a.state.Groups[0], len(a.state.Watches))
 	}
 }
 
@@ -1287,6 +1312,71 @@ func TestUpdateGroupPreservesDisabledPrivateNote(t *testing.T) {
 	a.updateGroup(response, request)
 	if response.Code != http.StatusSeeOther || a.state.Groups[0].Notes != "keep this context" {
 		t.Fatalf("note was not preserved: status=%d group=%+v", response.Code, a.state.Groups[0])
+	}
+}
+
+func TestUpdateDescriptorIncreasesCoverageWithoutLosingHistory(t *testing.T) {
+	master, err := hdkeychain.NewMaster([]byte("s-watcher descriptor coverage edit"), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := master.Neuter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := "wpkh(" + public.String() + "/0/*)"
+	add := url.Values{"label": {"wallet"}, "category": {"savings"}, "source": {descriptor}}
+	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(add.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusSeeOther || len(a.state.Watches) != defaultDiscoveryGap {
+		t.Fatalf("add descriptor: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
+	}
+
+	groupID := a.state.Groups[0].ID
+	originalID := a.state.Watches[0].ID
+	a.state.Watches[0].Initialized = true
+	a.state.Watches[0].KnownTx = []string{"historical"}
+	a.state.Events = []Event{{WatchID: originalID, GroupID: groupID, TxID: "historical"}}
+	response = httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	for _, expected := range []string{"Watched indexes per branch", "derivation_count", "derivationCounts=new Map", groupID} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("descriptor edit UI is missing %q", expected)
+		}
+	}
+
+	edit := url.Values{"label": {"wallet"}, "category": {"savings"}, "derivation_count": {"25"}, "notify_mode": {"all"}, "notify_minimum": {"0"}, "notify_after": {"0"}}
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", groupID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusSeeOther || a.state.Groups[0].Count != 25 || len(a.state.Watches) != 25 || len(a.state.Events) != 1 {
+		t.Fatalf("descriptor coverage did not increase cleanly: status=%d body=%s group=%+v watches=%d events=%d", response.Code, response.Body.String(), a.state.Groups[0], len(a.state.Watches), len(a.state.Events))
+	}
+	if a.state.Watches[0].ID != originalID || !a.state.Watches[0].Initialized || len(a.state.Watches[0].KnownTx) != 1 {
+		t.Fatalf("existing descriptor history was replaced: %+v", a.state.Watches[0])
+	}
+	for _, watch := range a.state.Watches[defaultDiscoveryGap:] {
+		if watch.Initialized || len(watch.KnownTx) != 0 {
+			t.Fatalf("newly derived address was not left for baseline scanning: %+v", watch)
+		}
+	}
+
+	edit.Set("derivation_count", "20")
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", groupID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusBadRequest || len(a.state.Watches) != 25 || !strings.Contains(response.Body.String(), "can only increase") {
+		t.Fatalf("descriptor coverage decrease was not rejected safely: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
 	}
 }
 

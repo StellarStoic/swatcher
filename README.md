@@ -176,7 +176,7 @@ Masking is a Web UI behavior only. Notification messages still carry full amount
 
 - **When to run it:** when an extended key or ranged descriptor is missing addresses — a wallet that skipped indexes needs a larger gap than the default.
 - **What it changes:** the discovery gap in `state.json`. **Lowering it never deletes addresses already derived**; it only stops new derivation beyond the new limit.
-- **Cost:** a few seconds and a restart, but the consequence is ongoing: every extra index is more Electrs queries on every scan. Per-branch derivation is capped at 500 addresses regardless.
+- **Cost:** a few seconds and a restart, but the consequence is ongoing: every extra index is more Electrs queries on every scan. There is no application-level cap, so unusually large values should be increased deliberately.
 - **Repeat safety:** idempotent. Newly derived historical addresses are baselined without firing notifications, the same as a new watch.
 - **Outputs:** none.
 
@@ -219,7 +219,7 @@ Nothing needs rebuilding on restore, but Electrs does need to be present and syn
 1. **Bitcoin mainnet only.** Testnet, signet, and regtest are not supported.
 2. **Watch-only, by design.** No transaction construction, signing, or spending, and no private key, WIF, extended private key, or seed phrase is ever accepted.
 3. **Hardened derivation below an extended key is impossible** and is rejected. Descriptors need a public extended key and a non-hardened wildcard path.
-4. **Address discovery is bounded** at 500 addresses per branch, to keep an extended key from generating unbounded Electrs load.
+4. **Address discovery is operator-controlled.** There is no application-level address cap. The global gap and each extended-key or ranged-descriptor watch can be increased, but large values increase Electrs traffic, scan time, memory use, and backup size.
 5. **Runes and Ordinals are detected only.** No content is decoded, rendered, fetched, or linked.
 6. **Input addresses are not sender identity.** They identify the outputs a transaction consumed, which is transaction-level evidence and nothing more.
 7. **Telegram, and Nostr over clearnet relays, disclose notification traffic** to that provider or relay. Electrs queries stay local either way.

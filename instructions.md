@@ -61,9 +61,16 @@ of consecutive unused indexes exists beyond the highest used address. Change
 the gap with **Actions → General → Smart Wallet Discovery**. A larger gap finds
 wallets that skipped more indexes but makes more local Electrs queries.
 
-Discovery is bounded at 500 addresses per branch. Reducing the gap never deletes
-addresses already saved. Newly derived historical addresses are baselined
-without false notifications.
+There is no application-level address limit. Large gaps can create substantial
+local Electrs traffic and a large state file, so increase them deliberately.
+Reducing the global gap never deletes addresses already saved. Newly derived
+historical addresses are baselined without false notifications.
+
+To expand one existing extended-key or ranged-descriptor watch, select **Edit**
+and increase **Watched indexes per branch**. Existing balances, transactions,
+and notes remain intact; only the additional addresses are derived and
+baselined. The value cannot be reduced. A receive-and-change watch derives that
+many indexes on each branch, so a value of 100 watches 200 addresses.
 
 ### Bulk import and combine
 

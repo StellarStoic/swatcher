@@ -16,7 +16,6 @@ const inputSpec = InputSpec.of({
     default: 20,
     integer: true,
     min: 1,
-    max: 500,
     step: 1,
     units: i18n('addresses'),
   }),

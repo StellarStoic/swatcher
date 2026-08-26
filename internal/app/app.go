@@ -135,7 +135,7 @@ func selectedTheme(value string) string {
 }
 
 func discoveryGap(value int) int {
-	if value < 1 || value > 500 {
+	if value < 1 {
 		return defaultDiscoveryGap
 	}
 	return value
@@ -154,25 +154,26 @@ func privacyIndicatorSettings(value state) (reuse, small, combined bool, thresho
 
 type groupView struct {
 	WatchGroup
-	Confirmed         int64
-	Unconfirmed       int64
-	Addresses         int
-	Ready             int
-	LastChecked       time.Time
-	LastError         string
-	DisplaySource     string
-	DisplayBalance    string
-	LastActivity      time.Time
-	ActivitySignal    string
-	ScriptTypeKey     string
-	CanEditScriptType bool
-	AddressTypeName   string
-	AddressTypeCode   string
-	AddressTypeURL    string
-	LastTxID          string
-	DisplayLastTxID   string
-	LastTxAt          time.Time
-	LastTxAgo         string
+	Confirmed              int64
+	Unconfirmed            int64
+	Addresses              int
+	Ready                  int
+	LastChecked            time.Time
+	LastError              string
+	DisplaySource          string
+	DisplayBalance         string
+	LastActivity           time.Time
+	ActivitySignal         string
+	ScriptTypeKey          string
+	CanEditScriptType      bool
+	CanEditDerivationCount bool
+	AddressTypeName        string
+	AddressTypeCode        string
+	AddressTypeURL         string
+	LastTxID               string
+	DisplayLastTxID        string
+	LastTxAt               time.Time
+	LastTxAgo              string
 }
 
 type eventView struct {
@@ -1169,6 +1170,24 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	group := &a.state.Groups[groupIndex]
+	canEditDerivationCount := group.ScriptType != "address" && !group.Bulk && !group.Combined
+	currentCount := group.Count
+	if currentCount < 1 {
+		currentCount = discoveryGap(a.state.DiscoveryGap)
+	}
+	requestedCount := currentCount
+	if value := strings.TrimSpace(r.FormValue("derivation_count")); canEditDerivationCount && value != "" {
+		parsed, parseErr := strconv.ParseUint(value, 10, 31)
+		if parseErr != nil || parsed < 1 {
+			writeFormError(w, r, http.StatusBadRequest, "The watched address count must be a positive whole number.")
+			return
+		}
+		requestedCount = int(parsed)
+		if requestedCount < currentCount {
+			writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("The watched address count can only increase; it is currently %d per branch.", currentCount))
+			return
+		}
+	}
 	requestedType := strings.TrimSpace(r.FormValue("script_type"))
 	typeChanged := false
 	var replacement []Watch
@@ -1177,11 +1196,7 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 			writeFormError(w, r, http.StatusBadRequest, "Choose a valid xpub address type.")
 			return
 		}
-		count := group.Count
-		if count < 1 {
-			count = discoveryGap(a.state.DiscoveryGap)
-		}
-		derived, err := bitcoin.DeriveAddresses(group.Source, requestedType, count, group.IncludeChange)
+		derived, err := bitcoin.DeriveAddresses(group.Source, requestedType, requestedCount, group.IncludeChange)
 		if err != nil {
 			writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
 			return
@@ -1213,6 +1228,49 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		typeChanged = true
 	}
+	var additions []Watch
+	if canEditDerivationCount && !typeChanged && requestedCount > currentCount {
+		derived, err := bitcoin.DeriveAddresses(group.Source, group.ScriptType, requestedCount, group.IncludeChange)
+		if err != nil {
+			writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
+			return
+		}
+		current := make(map[string]bool)
+		owners := make(map[string]string)
+		for _, watch := range a.state.Watches {
+			key := watchIdentityKey(watch)
+			if watch.GroupID == id {
+				current[key] = true
+			} else {
+				owners[key] = watch.GroupID
+			}
+		}
+		for _, child := range derived {
+			scriptHash, hashErr := bitcoin.ScriptHash(child.Address)
+			if hashErr != nil {
+				writeFormError(w, r, http.StatusBadRequest, hashErr.Error()+".")
+				return
+			}
+			candidate := Watch{Address: child.Address, ScriptHash: scriptHash}
+			key := watchIdentityKey(candidate)
+			if current[key] {
+				continue
+			}
+			if owner := owners[key]; owner != "" {
+				ownerName := "another watched wallet"
+				for _, candidateGroup := range a.state.Groups {
+					if candidateGroup.ID == owner {
+						ownerName = candidateGroup.Category + " / " + candidateGroup.Label
+						break
+					}
+				}
+				writeFormError(w, r, http.StatusConflict, fmt.Sprintf("The additional derived addresses overlap %q. Nothing was changed.", ownerName))
+				return
+			}
+			additions = append(additions, Watch{ID: randomID(), GroupID: id, Label: label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
+			current[key] = true
+		}
+	}
 	group.Label = label
 	group.Category = category
 	if noteProvided {
@@ -1223,9 +1281,7 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	group.NotifyAfter = notifyAfter
 	if typeChanged {
 		group.ScriptType = requestedType
-		if group.Count < 1 {
-			group.Count = discoveryGap(a.state.DiscoveryGap)
-		}
+		group.Count = requestedCount
 		group.DiscoveryError = ""
 		keptWatches := a.state.Watches[:0]
 		for _, watch := range a.state.Watches {
@@ -1241,6 +1297,10 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		a.state.Events = keptEvents
+	} else if requestedCount > currentCount {
+		group.Count = requestedCount
+		group.DiscoveryError = ""
+		a.state.Watches = append(a.state.Watches, additions...)
 	}
 	for i := range a.state.Watches {
 		if a.state.Watches[i].GroupID == id {
@@ -2006,13 +2066,8 @@ func (a *App) expandDiscoveryLocked() error {
 		if highestUsed >= 0 && highestUsed+1+gap > desired {
 			desired = highestUsed + 1 + gap
 		}
-		limitError := ""
-		if desired > 500 {
-			desired = 500
-			limitError = fmt.Sprintf("smart discovery reached the 500-address limit before satisfying gap %d", gap)
-		}
 		if desired <= currentCount {
-			group.DiscoveryError = limitError
+			group.DiscoveryError = ""
 			continue
 		}
 		group.DiscoveryError = ""
@@ -2039,7 +2094,6 @@ func (a *App) expandDiscoveryLocked() error {
 		}
 		if group.DiscoveryError == "" {
 			group.Count = desired
-			group.DiscoveryError = limitError
 		}
 	}
 	return nil
@@ -2512,6 +2566,10 @@ func (a *App) groupViewsLocked() []groupView {
 	indexes := make(map[string]int, len(a.state.Groups))
 	for _, group := range a.state.Groups {
 		scriptTypeKey := group.ScriptType
+		canEditDerivationCount := group.ScriptType != "address" && !group.Bulk && !group.Combined
+		if canEditDerivationCount && group.Count < 1 {
+			group.Count = discoveryGap(a.state.DiscoveryGap)
+		}
 		if group.Category == "" {
 			group.Category = "uncategorized"
 		}
@@ -2529,7 +2587,7 @@ func (a *App) groupViewsLocked() []groupView {
 		if group.Bulk || group.Combined {
 			typeName, typeCode, typeURL = "", "", ""
 		}
-		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
+		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), CanEditDerivationCount: canEditDerivationCount, AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
 	}
 	for _, watch := range a.state.Watches {
 		groupID := watch.GroupID
@@ -2685,8 +2743,8 @@ func SetPrivacyMode(dataDir string, enabled bool, password string) error {
 }
 
 func SetDiscoveryGap(dataDir string, gap int) error {
-	if gap < 1 || gap > 500 {
-		return errors.New("discovery gap must be between 1 and 500")
+	if gap < 1 {
+		return errors.New("discovery gap must be positive")
 	}
 	path := filepath.Join(dataDir, "state.json")
 	var current state

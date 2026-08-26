@@ -41,8 +41,8 @@ var descriptorPattern = regexp.MustCompile(`^(wpkh|pkh|tr|sh\(wpkh)\((.+)\)(\)?)
 // keys use /0/* and optionally /1/*. Descriptors may specify a non-hardened
 // suffix ending in /* and may use <0;1> for both wallet branches.
 func DeriveAddresses(input, scriptType string, count int, includeChange bool) ([]DerivedAddress, error) {
-	if count < 1 || count > 500 {
-		return nil, errors.New("derivation count must be between 1 and 500")
+	if count < 1 {
+		return nil, errors.New("derivation count must be positive")
 	}
 	spec, err := parseDeriveSpec(strings.TrimSpace(input), scriptType, includeChange)
 	if err != nil {

@@ -92,10 +92,12 @@ func TestNormalizeYpubInfersNestedSegwit(t *testing.T) {
 }
 
 func TestDeriveRejectsUnsafeRanges(t *testing.T) {
-	for _, count := range []int{0, 501} {
-		if _, err := DeriveAddresses(testXpub(t), "native-segwit", count, false); err == nil {
-			t.Fatalf("accepted count %d", count)
-		}
+	if _, err := DeriveAddresses(testXpub(t), "native-segwit", 0, false); err == nil {
+		t.Fatal("accepted zero derivation count")
+	}
+	addresses, err := DeriveAddresses(testXpub(t), "native-segwit", 501, false)
+	if err != nil || len(addresses) != 501 {
+		t.Fatalf("derivation remains artificially capped at 500: count=%d err=%v", len(addresses), err)
 	}
 	if _, err := DeriveAddresses("wpkh("+testXpub(t)+"/0'/*)", "", 1, false); err == nil {
 		t.Fatal("accepted hardened public derivation")

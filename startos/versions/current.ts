@@ -7,15 +7,15 @@ export const current = VersionInfo.of({
   version: '0.1.2:0',
   releaseNotes: {
     en_US:
-      'Improves long transaction lists and RBF warnings, confirms watch removal, adds a favicon, and lets bulk imports identify and strip watched addresses.',
+      'Adds editable per-wallet derivation coverage without the former 500-address cap, plus safer bulk imports, removal confirmation, a favicon, and transaction UI fixes.',
     es_ES:
-      'Mejora las listas largas y los avisos RBF, confirma eliminaciones, añade un favicon y permite identificar y excluir direcciones ya vigiladas al importar.',
+      'Añade cobertura de derivación editable por cartera sin el límite anterior de 500 direcciones, además de importaciones masivas más seguras y mejoras de interfaz.',
     de_DE:
-      'Verbessert lange Listen und RBF-Warnungen, bestätigt Löschungen, ergänzt ein Favicon und kann bereits beobachtete Adressen beim Massenimport erkennen und entfernen.',
+      'Ergänzt eine bearbeitbare Ableitungsabdeckung pro Wallet ohne die frühere 500-Adressen-Grenze sowie sicherere Massenimporte und UI-Verbesserungen.',
     pl_PL:
-      'Ulepsza długie listy i ostrzeżenia RBF, potwierdza usuwanie, dodaje faviconę oraz wykrywa i pomija obserwowane adresy podczas importu zbiorczego.',
+      'Dodaje edytowalny zakres derywacji dla portfela bez dawnego limitu 500 adresów oraz bezpieczniejszy import zbiorczy i poprawki interfejsu.',
     fr_FR:
-      'Améliore les longues listes et alertes RBF, confirme les suppressions, ajoute un favicon et permet d’identifier et d’exclure les adresses déjà surveillées lors d’un import.',
+      'Ajoute une couverture de dérivation modifiable par portefeuille sans l’ancienne limite de 500 adresses, ainsi que des imports groupés plus sûrs et des améliorations d’interface.',
   },
   migrations: {
     up: async () => {},
