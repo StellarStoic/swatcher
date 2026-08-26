@@ -4,7 +4,7 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '0.1.2:0',
+  version: '0.1.2:1',
   releaseNotes: {
     en_US:
       'Adds stable case-insensitive tag colors, editable derivation coverage, safer bulk imports, removal confirmation, a favicon, transaction fixes, and wallet highlighting.',
