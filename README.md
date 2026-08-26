@@ -131,6 +131,8 @@ Transaction history is paginated at 100 transactions per page. Within each trans
 
 Removing a saved watch requires a second, named Yes/No confirmation so an accidental click cannot immediately delete it.
 
+Bulk-import conflicts identify every address that already belongs to a local watch. The operator can keep the atomic rejection or explicitly add only the remaining new addresses; the server rechecks and strips overlaps when that action is confirmed.
+
 ## Actions
 
 Six actions, all user-facing. Four of them write a setting through the application's own CLI and then restart the service; none of them is destructive, and every one is safe to repeat.

@@ -71,6 +71,11 @@ Select **Paste in bulk** to add addresses separated by whitespace, commas, or
 semicolons. The import is atomic: if any entry is invalid or already watched,
 nothing is added.
 
+When pasted addresses overlap existing watches, the warning lists every
+duplicate and its current watch. Select **Add N new addresses only** to remove
+the listed duplicates and create the bulk watch from the remaining addresses.
+The option is not shown when every pasted address is already watched.
+
 Select **Combine** to reveal selection boxes for existing watches. Choose at
 least two rows, then **Combine selected**. Combining creates one fixed address
 collection; combining an xpub or descriptor retains its current derived

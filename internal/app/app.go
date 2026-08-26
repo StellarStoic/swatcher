@@ -319,6 +319,11 @@ type notificationBalance struct {
 	Unconfirmed int64
 }
 
+type bulkOverlap struct {
+	Address string `json:"address"`
+	Watch   string `json:"watch"`
+}
+
 func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
@@ -939,6 +944,14 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	groupNames := make(map[string]string, len(a.state.Groups))
+	for _, group := range a.state.Groups {
+		name := group.Label
+		if group.Category != "" {
+			name = group.Category + " / " + group.Label
+		}
+		groupNames[group.ID] = name
+	}
 	overlaps := map[string]int{}
 	owners := make(map[string]string, len(a.state.Watches))
 	for _, existing := range a.state.Watches {
@@ -948,30 +961,49 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		}
 		owners[watchIdentityKey(existing)] = existingGroupID
 	}
+	duplicates := make([]bulkOverlap, 0)
+	newOnly := make([]Watch, 0, len(newWatches))
 	for _, candidate := range newWatches {
 		if existingGroupID := owners[watchIdentityKey(candidate)]; existingGroupID != "" {
 			overlaps[existingGroupID]++
+			ownerName := groupNames[existingGroupID]
+			if ownerName == "" {
+				ownerName = "an existing watch"
+			}
+			duplicates = append(duplicates, bulkOverlap{Address: candidate.Address, Watch: ownerName})
+			continue
 		}
+		newOnly = append(newOnly, candidate)
 	}
 	if len(overlaps) > 0 {
-		groupID, overlapCount := "", 0
-		for id, matches := range overlaps {
-			if matches > overlapCount {
-				groupID, overlapCount = id, matches
+		if bulk {
+			if r.FormValue("skip_existing") == "on" && len(newOnly) > 0 {
+				newWatches = newOnly
+				count = len(newWatches)
+			} else {
+				writeBulkOverlapError(w, r, duplicates, len(newOnly), len(newWatches))
+				return
 			}
-		}
-		name := "an existing watch"
-		for _, group := range a.state.Groups {
-			if group.ID == groupID {
-				name = group.Label
-				if group.Category != "" {
-					name = group.Category + " / " + group.Label
+		} else {
+			groupID, overlapCount := "", 0
+			for id, matches := range overlaps {
+				if matches > overlapCount {
+					groupID, overlapCount = id, matches
 				}
-				break
 			}
+			name := "an existing watch"
+			for _, group := range a.state.Groups {
+				if group.ID == groupID {
+					name = group.Label
+					if group.Category != "" {
+						name = group.Category + " / " + group.Label
+					}
+					break
+				}
+			}
+			writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This watch overlaps with %q: %d of %d addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
+			return
 		}
-		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This watch overlaps with %q: %d of %d addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
-		return
 	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
 	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC(), Bulk: bulk})
@@ -1026,6 +1058,29 @@ func writeFormError(w http.ResponseWriter, r *http.Request, status int, message 
 		return
 	}
 	http.Error(w, message, status)
+}
+
+func writeBulkOverlapError(w http.ResponseWriter, r *http.Request, duplicates []bulkOverlap, newCount, total int) {
+	message := fmt.Sprintf("%d of %d addresses are already being watched. Nothing was added.", len(duplicates), total)
+	if newCount > 0 {
+		addressWord := "addresses"
+		if newCount == 1 {
+			addressWord = "address"
+		}
+		message = fmt.Sprintf("%s You can add the remaining %d new %s only.", message, newCount, addressWord)
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(struct {
+			Error      string        `json:"error"`
+			Duplicates []bulkOverlap `json:"duplicates"`
+			NewCount   int           `json:"newCount"`
+			CanSkip    bool          `json:"canSkip"`
+		}{Error: message, Duplicates: duplicates, NewCount: newCount, CanSkip: newCount > 0})
+		return
+	}
+	http.Error(w, message, http.StatusConflict)
 }
 
 func scriptTypeForAddress(address string) string {

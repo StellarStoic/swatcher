@@ -7,15 +7,15 @@ export const current = VersionInfo.of({
   version: '0.1.2:0',
   releaseNotes: {
     en_US:
-      'Collapses long transaction address lists to 10 rows, improves wrapped RBF warnings, confirms watch removal, and uses the package icon as the browser favicon.',
+      'Improves long transaction lists and RBF warnings, confirms watch removal, adds a favicon, and lets bulk imports identify and strip watched addresses.',
     es_ES:
-      'Contrae las listas largas de direcciones a 10 filas, mejora los avisos RBF largos, confirma la eliminación de vigilancias y usa el icono del paquete como favicon.',
+      'Mejora las listas largas y los avisos RBF, confirma eliminaciones, añade un favicon y permite identificar y excluir direcciones ya vigiladas al importar.',
     de_DE:
-      'Klappt lange Transaktionsadresslisten auf 10 Zeilen ein, verbessert lange RBF-Warnungen, bestätigt das Entfernen von Beobachtungen und nutzt das Paketsymbol als Favicon.',
+      'Verbessert lange Listen und RBF-Warnungen, bestätigt Löschungen, ergänzt ein Favicon und kann bereits beobachtete Adressen beim Massenimport erkennen und entfernen.',
     pl_PL:
-      'Zwija długie listy adresów do 10 wierszy, poprawia ostrzeżenia RBF, potwierdza usuwanie obserwacji i używa ikony pakietu jako favicony.',
+      'Ulepsza długie listy i ostrzeżenia RBF, potwierdza usuwanie, dodaje faviconę oraz wykrywa i pomija obserwowane adresy podczas importu zbiorczego.',
     fr_FR:
-      'Réduit les longues listes d’adresses à 10 lignes, améliore les avertissements RBF, confirme la suppression des surveillances et utilise l’icône du paquet comme favicon.',
+      'Améliore les longues listes et alertes RBF, confirme les suppressions, ajoute un favicon et permet d’identifier et d’exclure les adresses déjà surveillées lors d’un import.',
   },
   migrations: {
     up: async () => {},

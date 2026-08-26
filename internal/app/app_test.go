@@ -1006,14 +1006,43 @@ func TestBulkAddressImportCreatesOneDeduplicatedGroup(t *testing.T) {
 		}
 	}
 
-	second := url.Values{"label": {"duplicate list"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + segwit}}
+	newAddress := "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+	second := url.Values{"label": {"duplicate list"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + newAddress}}
 	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(second.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "application/json")
 	response = httptest.NewRecorder()
 	a.addWatch(response, request)
-	if response.Code != http.StatusConflict || len(a.state.Groups) != 1 || len(a.state.Watches) != 3 || !strings.Contains(response.Body.String(), "Nothing was added") {
+	var conflict struct {
+		Duplicates []bulkOverlap `json:"duplicates"`
+		NewCount   int           `json:"newCount"`
+		CanSkip    bool          `json:"canSkip"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode bulk overlap: %v; body=%s", err, response.Body.String())
+	}
+	if response.Code != http.StatusConflict || len(a.state.Groups) != 1 || len(a.state.Watches) != 3 || !strings.Contains(response.Body.String(), "Nothing was added") || len(conflict.Duplicates) != 1 || conflict.Duplicates[0].Address != legacy || conflict.Duplicates[0].Watch != "donations / archive addresses" || conflict.NewCount != 1 || !conflict.CanSkip {
 		t.Fatalf("overlapping bulk import was not atomic: status=%d body=%s groups=%d watches=%d", response.Code, response.Body.String(), len(a.state.Groups), len(a.state.Watches))
+	}
+
+	second.Set("skip_existing", "on")
+	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(second.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusCreated || len(a.state.Groups) != 2 || len(a.state.Watches) != 4 || a.state.Groups[1].Count != 1 || a.state.Watches[3].Address != newAddress {
+		t.Fatalf("bulk import did not strip the existing address: status=%d body=%s groups=%+v watches=%+v", response.Code, response.Body.String(), a.state.Groups, a.state.Watches)
+	}
+
+	allExisting := url.Values{"label": {"all duplicate"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + segwit}, "skip_existing": {"on"}}
+	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(allExisting.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusConflict || len(a.state.Groups) != 2 || len(a.state.Watches) != 4 || !strings.Contains(response.Body.String(), `"canSkip":false`) {
+		t.Fatalf("all-existing bulk import should remain rejected: status=%d body=%s groups=%d watches=%d", response.Code, response.Body.String(), len(a.state.Groups), len(a.state.Watches))
 	}
 }
 
