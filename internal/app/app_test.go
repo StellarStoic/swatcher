@@ -489,7 +489,7 @@ func TestTemplatesEscapeStoredValues(t *testing.T) {
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || !strings.Contains(body, ".rbf-warning{display:inline-block;max-width:100%") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 {
+	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || !strings.Contains(body, ".rbf-warning{display:inline-block;max-width:100%") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 || !strings.Contains(body, `id="remove-watch-confirm"`) || !strings.Contains(body, "Are you sure you want to remove this watch?") || !strings.Contains(body, `data-watch-name="&lt;script&gt;alert(&#34;xss&#34;)&lt;/script&gt;"`) || !strings.Contains(body, `data-watch-group="&lt;script&gt;alert(&#34;xss&#34;)&lt;/script&gt;"`) || !strings.Contains(body, "form.dataset.removeConfirmed='true'") || !strings.Contains(body, "form.requestSubmit()") {
 		t.Fatalf("stored values were not safely HTML-escaped: %s", body)
 	}
 }

@@ -129,6 +129,8 @@ From there the whole flow is inside the Web UI: add a watch, and the first Elect
 
 Transaction history is paginated at 100 transactions per page. Within each transaction card, address lists longer than 10 rows are collapsed to the first 10 and can be expanded on demand; text exports still include the complete list.
 
+Removing a saved watch requires a second, named Yes/No confirmation so an accidental click cannot immediately delete it.
+
 ## Actions
 
 Six actions, all user-facing. Four of them write a setting through the application's own CLI and then restart the service; none of them is destructive, and every one is safe to repeat.

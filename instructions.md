@@ -77,6 +77,10 @@ collection; combining an xpub or descriptor retains its current derived
 addresses but stops future discovery for that source. **Cancel** exits selection
 mode without changing anything.
 
+Select **Remove** to delete a saved watch. s/watcher names the watch and asks
+**Are you sure you want to remove this watch?** Choose **No** or press Escape to
+keep it; choose **Yes** to remove it.
+
 ## Transaction history
 
 Each watch shows its latest transaction. Select **Show all transactions** for
