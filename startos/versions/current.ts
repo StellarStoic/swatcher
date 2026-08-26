@@ -7,15 +7,15 @@ export const current = VersionInfo.of({
   version: '0.1.2:0',
   releaseNotes: {
     en_US:
-      'Adds editable derivation coverage without the former 500-address cap, safer bulk imports, removal confirmation, a favicon, transaction fixes, and five-second wallet highlighting.',
+      'Adds stable case-insensitive tag colors, editable derivation coverage, safer bulk imports, removal confirmation, a favicon, transaction fixes, and wallet highlighting.',
     es_ES:
-      'Añade cobertura de derivación editable sin el límite anterior de 500 direcciones, importaciones más seguras y un resaltado de cartera de cinco segundos.',
+      'Añade colores de etiqueta estables sin distinguir mayúsculas, cobertura de derivación editable, importaciones más seguras y resaltado de cartera.',
     de_DE:
-      'Ergänzt eine bearbeitbare Ableitungsabdeckung ohne die frühere 500-Adressen-Grenze, sicherere Massenimporte und eine fünfsekündige Wallet-Hervorhebung.',
+      'Ergänzt stabile Tag-Farben ohne Beachtung der Großschreibung, bearbeitbare Ableitungsabdeckung, sicherere Massenimporte und Wallet-Hervorhebung.',
     pl_PL:
-      'Dodaje edytowalny zakres derywacji bez dawnego limitu 500 adresów, bezpieczniejszy import zbiorczy i pięciosekundowe wyróżnienie portfela.',
+      'Dodaje trwałe kolory etykiet niezależne od wielkości liter, edytowalny zakres derywacji, bezpieczniejszy import i wyróżnienie portfela.',
     fr_FR:
-      'Ajoute une couverture de dérivation modifiable sans l’ancienne limite de 500 adresses, des imports plus sûrs et une surbrillance du portefeuille pendant cinq secondes.',
+      'Ajoute des couleurs d’étiquette stables sans distinction de casse, une dérivation modifiable, des imports plus sûrs et la surbrillance du portefeuille.',
   },
   migrations: {
     up: async () => {},

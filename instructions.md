@@ -54,6 +54,10 @@ Names and groups are normalized to lowercase and may contain letters, numbers,
 spaces, and underscores. Notes accept up to 500 plain-text characters. Never
 paste a seed phrase, Bitcoin private key, WIF, or extended private key.
 
+Wallet-name and group tags receive a light color derived from their normalized
+text. The color is stable across reloads and ignores letter case, so `Peach`,
+`peach`, and `PeAch` always use the same color.
+
 ### Smart discovery
 
 Extended keys and ranged descriptors derive addresses until the selected number
