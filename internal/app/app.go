@@ -26,6 +26,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	swatcherassets "github.com/s-watcher/s-watcher"
 	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
 	"github.com/s-watcher/s-watcher/internal/notify"
@@ -134,7 +135,7 @@ func selectedTheme(value string) string {
 }
 
 func discoveryGap(value int) int {
-	if value < 1 || value > 500 {
+	if value < 1 {
 		return defaultDiscoveryGap
 	}
 	return value
@@ -153,25 +154,26 @@ func privacyIndicatorSettings(value state) (reuse, small, combined bool, thresho
 
 type groupView struct {
 	WatchGroup
-	Confirmed         int64
-	Unconfirmed       int64
-	Addresses         int
-	Ready             int
-	LastChecked       time.Time
-	LastError         string
-	DisplaySource     string
-	DisplayBalance    string
-	LastActivity      time.Time
-	ActivitySignal    string
-	ScriptTypeKey     string
-	CanEditScriptType bool
-	AddressTypeName   string
-	AddressTypeCode   string
-	AddressTypeURL    string
-	LastTxID          string
-	DisplayLastTxID   string
-	LastTxAt          time.Time
-	LastTxAgo         string
+	Confirmed              int64
+	Unconfirmed            int64
+	Addresses              int
+	Ready                  int
+	LastChecked            time.Time
+	LastError              string
+	DisplaySource          string
+	DisplayBalance         string
+	LastActivity           time.Time
+	ActivitySignal         string
+	ScriptTypeKey          string
+	CanEditScriptType      bool
+	CanEditDerivationCount bool
+	AddressTypeName        string
+	AddressTypeCode        string
+	AddressTypeURL         string
+	LastTxID               string
+	DisplayLastTxID        string
+	LastTxAt               time.Time
+	LastTxAgo              string
 }
 
 type eventView struct {
@@ -318,6 +320,11 @@ type notificationBalance struct {
 	Unconfirmed int64
 }
 
+type bulkOverlap struct {
+	Address string `json:"address"`
+	Watch   string `json:"watch"`
+}
+
 func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
@@ -336,6 +343,8 @@ func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) 
 
 func (a *App) Run(listen string) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /favicon.png", serveFavicon)
+	mux.HandleFunc("GET /favicon.ico", serveFavicon)
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /logout", a.logout)
@@ -352,6 +361,12 @@ func (a *App) Run(listen string) error {
 	go a.pollLoop()
 	server := &http.Server{Addr: listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
 	return server.ListenAndServe()
+}
+
+func serveFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(swatcherassets.IconPNG)
 }
 
 func (a *App) findAddress(w http.ResponseWriter, r *http.Request) {
@@ -930,6 +945,14 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	groupNames := make(map[string]string, len(a.state.Groups))
+	for _, group := range a.state.Groups {
+		name := group.Label
+		if group.Category != "" {
+			name = group.Category + " / " + group.Label
+		}
+		groupNames[group.ID] = name
+	}
 	overlaps := map[string]int{}
 	owners := make(map[string]string, len(a.state.Watches))
 	for _, existing := range a.state.Watches {
@@ -939,30 +962,49 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 		}
 		owners[watchIdentityKey(existing)] = existingGroupID
 	}
+	duplicates := make([]bulkOverlap, 0)
+	newOnly := make([]Watch, 0, len(newWatches))
 	for _, candidate := range newWatches {
 		if existingGroupID := owners[watchIdentityKey(candidate)]; existingGroupID != "" {
 			overlaps[existingGroupID]++
+			ownerName := groupNames[existingGroupID]
+			if ownerName == "" {
+				ownerName = "an existing watch"
+			}
+			duplicates = append(duplicates, bulkOverlap{Address: candidate.Address, Watch: ownerName})
+			continue
 		}
+		newOnly = append(newOnly, candidate)
 	}
 	if len(overlaps) > 0 {
-		groupID, overlapCount := "", 0
-		for id, matches := range overlaps {
-			if matches > overlapCount {
-				groupID, overlapCount = id, matches
+		if bulk {
+			if r.FormValue("skip_existing") == "on" && len(newOnly) > 0 {
+				newWatches = newOnly
+				count = len(newWatches)
+			} else {
+				writeBulkOverlapError(w, r, duplicates, len(newOnly), len(newWatches))
+				return
 			}
-		}
-		name := "an existing watch"
-		for _, group := range a.state.Groups {
-			if group.ID == groupID {
-				name = group.Label
-				if group.Category != "" {
-					name = group.Category + " / " + group.Label
+		} else {
+			groupID, overlapCount := "", 0
+			for id, matches := range overlaps {
+				if matches > overlapCount {
+					groupID, overlapCount = id, matches
 				}
-				break
 			}
+			name := "an existing watch"
+			for _, group := range a.state.Groups {
+				if group.ID == groupID {
+					name = group.Label
+					if group.Category != "" {
+						name = group.Category + " / " + group.Label
+					}
+					break
+				}
+			}
+			writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This watch overlaps with %q: %d of %d addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
+			return
 		}
-		writeFormError(w, r, http.StatusConflict, fmt.Sprintf("This watch overlaps with %q: %d of %d addresses are already being watched. Nothing was added.", name, overlapCount, len(newWatches)))
-		return
 	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
 	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC(), Bulk: bulk})
@@ -1017,6 +1059,29 @@ func writeFormError(w http.ResponseWriter, r *http.Request, status int, message 
 		return
 	}
 	http.Error(w, message, status)
+}
+
+func writeBulkOverlapError(w http.ResponseWriter, r *http.Request, duplicates []bulkOverlap, newCount, total int) {
+	message := fmt.Sprintf("%d of %d addresses are already being watched. Nothing was added.", len(duplicates), total)
+	if newCount > 0 {
+		addressWord := "addresses"
+		if newCount == 1 {
+			addressWord = "address"
+		}
+		message = fmt.Sprintf("%s You can add the remaining %d new %s only.", message, newCount, addressWord)
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(struct {
+			Error      string        `json:"error"`
+			Duplicates []bulkOverlap `json:"duplicates"`
+			NewCount   int           `json:"newCount"`
+			CanSkip    bool          `json:"canSkip"`
+		}{Error: message, Duplicates: duplicates, NewCount: newCount, CanSkip: newCount > 0})
+		return
+	}
+	http.Error(w, message, http.StatusConflict)
 }
 
 func scriptTypeForAddress(address string) string {
@@ -1105,6 +1170,24 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	group := &a.state.Groups[groupIndex]
+	canEditDerivationCount := group.ScriptType != "address" && !group.Bulk && !group.Combined
+	currentCount := group.Count
+	if currentCount < 1 {
+		currentCount = discoveryGap(a.state.DiscoveryGap)
+	}
+	requestedCount := currentCount
+	if value := strings.TrimSpace(r.FormValue("derivation_count")); canEditDerivationCount && value != "" {
+		parsed, parseErr := strconv.ParseUint(value, 10, 31)
+		if parseErr != nil || parsed < 1 {
+			writeFormError(w, r, http.StatusBadRequest, "The watched address count must be a positive whole number.")
+			return
+		}
+		requestedCount = int(parsed)
+		if requestedCount < currentCount {
+			writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("The watched address count can only increase; it is currently %d per branch.", currentCount))
+			return
+		}
+	}
 	requestedType := strings.TrimSpace(r.FormValue("script_type"))
 	typeChanged := false
 	var replacement []Watch
@@ -1113,11 +1196,7 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 			writeFormError(w, r, http.StatusBadRequest, "Choose a valid xpub address type.")
 			return
 		}
-		count := group.Count
-		if count < 1 {
-			count = discoveryGap(a.state.DiscoveryGap)
-		}
-		derived, err := bitcoin.DeriveAddresses(group.Source, requestedType, count, group.IncludeChange)
+		derived, err := bitcoin.DeriveAddresses(group.Source, requestedType, requestedCount, group.IncludeChange)
 		if err != nil {
 			writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
 			return
@@ -1149,6 +1228,49 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		typeChanged = true
 	}
+	var additions []Watch
+	if canEditDerivationCount && !typeChanged && requestedCount > currentCount {
+		derived, err := bitcoin.DeriveAddresses(group.Source, group.ScriptType, requestedCount, group.IncludeChange)
+		if err != nil {
+			writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
+			return
+		}
+		current := make(map[string]bool)
+		owners := make(map[string]string)
+		for _, watch := range a.state.Watches {
+			key := watchIdentityKey(watch)
+			if watch.GroupID == id {
+				current[key] = true
+			} else {
+				owners[key] = watch.GroupID
+			}
+		}
+		for _, child := range derived {
+			scriptHash, hashErr := bitcoin.ScriptHash(child.Address)
+			if hashErr != nil {
+				writeFormError(w, r, http.StatusBadRequest, hashErr.Error()+".")
+				return
+			}
+			candidate := Watch{Address: child.Address, ScriptHash: scriptHash}
+			key := watchIdentityKey(candidate)
+			if current[key] {
+				continue
+			}
+			if owner := owners[key]; owner != "" {
+				ownerName := "another watched wallet"
+				for _, candidateGroup := range a.state.Groups {
+					if candidateGroup.ID == owner {
+						ownerName = candidateGroup.Category + " / " + candidateGroup.Label
+						break
+					}
+				}
+				writeFormError(w, r, http.StatusConflict, fmt.Sprintf("The additional derived addresses overlap %q. Nothing was changed.", ownerName))
+				return
+			}
+			additions = append(additions, Watch{ID: randomID(), GroupID: id, Label: label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
+			current[key] = true
+		}
+	}
 	group.Label = label
 	group.Category = category
 	if noteProvided {
@@ -1159,9 +1281,7 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	group.NotifyAfter = notifyAfter
 	if typeChanged {
 		group.ScriptType = requestedType
-		if group.Count < 1 {
-			group.Count = discoveryGap(a.state.DiscoveryGap)
-		}
+		group.Count = requestedCount
 		group.DiscoveryError = ""
 		keptWatches := a.state.Watches[:0]
 		for _, watch := range a.state.Watches {
@@ -1177,6 +1297,10 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		a.state.Events = keptEvents
+	} else if requestedCount > currentCount {
+		group.Count = requestedCount
+		group.DiscoveryError = ""
+		a.state.Watches = append(a.state.Watches, additions...)
 	}
 	for i := range a.state.Watches {
 		if a.state.Watches[i].GroupID == id {
@@ -1942,13 +2066,8 @@ func (a *App) expandDiscoveryLocked() error {
 		if highestUsed >= 0 && highestUsed+1+gap > desired {
 			desired = highestUsed + 1 + gap
 		}
-		limitError := ""
-		if desired > 500 {
-			desired = 500
-			limitError = fmt.Sprintf("smart discovery reached the 500-address limit before satisfying gap %d", gap)
-		}
 		if desired <= currentCount {
-			group.DiscoveryError = limitError
+			group.DiscoveryError = ""
 			continue
 		}
 		group.DiscoveryError = ""
@@ -1975,7 +2094,6 @@ func (a *App) expandDiscoveryLocked() error {
 		}
 		if group.DiscoveryError == "" {
 			group.Count = desired
-			group.DiscoveryError = limitError
 		}
 	}
 	return nil
@@ -2448,6 +2566,10 @@ func (a *App) groupViewsLocked() []groupView {
 	indexes := make(map[string]int, len(a.state.Groups))
 	for _, group := range a.state.Groups {
 		scriptTypeKey := group.ScriptType
+		canEditDerivationCount := group.ScriptType != "address" && !group.Bulk && !group.Combined
+		if canEditDerivationCount && group.Count < 1 {
+			group.Count = discoveryGap(a.state.DiscoveryGap)
+		}
 		if group.Category == "" {
 			group.Category = "uncategorized"
 		}
@@ -2465,7 +2587,7 @@ func (a *App) groupViewsLocked() []groupView {
 		if group.Bulk || group.Combined {
 			typeName, typeCode, typeURL = "", "", ""
 		}
-		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
+		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), CanEditDerivationCount: canEditDerivationCount, AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
 	}
 	for _, watch := range a.state.Watches {
 		groupID := watch.GroupID
@@ -2621,8 +2743,8 @@ func SetPrivacyMode(dataDir string, enabled bool, password string) error {
 }
 
 func SetDiscoveryGap(dataDir string, gap int) error {
-	if gap < 1 || gap > 500 {
-		return errors.New("discovery gap must be between 1 and 500")
+	if gap < 1 {
+		return errors.New("discovery gap must be positive")
 	}
 	path := filepath.Join(dataDir, "state.json")
 	var current state

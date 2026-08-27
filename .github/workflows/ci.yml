@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -23,20 +23,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
       - run: go test ./cmd/... ./internal/...
       - run: go vet ./cmd/... ./internal/...
-      - run: npm run check
-      - run: node node_modules/@start9labs/start-sdk/lint.mjs
-      - run: npm run build
 
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
+
+      # The StartOS package builds this Dockerfile for both platforms; a break
+      # on either one only surfaces here.
       - uses: docker/build-push-action@v7
         with:
           context: .

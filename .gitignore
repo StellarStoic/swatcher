@@ -1,5 +1,4 @@
-data/
-javascript/
-node_modules/
-*.s9pk
+.DS_Store
+.vscode/
 /s-watcher
+data/

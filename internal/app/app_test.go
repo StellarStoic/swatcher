@@ -19,6 +19,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
+	swatcherassets "github.com/s-watcher/s-watcher"
 	"github.com/s-watcher/s-watcher/internal/bitcoin"
 	"github.com/s-watcher/s-watcher/internal/electrum"
 	"github.com/s-watcher/s-watcher/internal/notify"
@@ -332,7 +333,7 @@ func TestTransactionHistoryPaginatesOneHundredEvents(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", response.Code, body)
 	}
-	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC", "Copy text", "Save image", "transactionExportText", "Generated locally by s/watcher"} {
+	for _, expected := range []string{"205</strong> transactions", "page 2 of 3", "data-txid=\"tx-100\"", "tx-199", "Previous 100", "Next 100", "Runes · runestone detected", "2 inscription envelopes", "history note", "From input address", "data-address=\"bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0\"", "123432 sat", "From watched address", "data-address=\"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\"", "1234 sat", "To address", "data-address=\"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy\"", "0.12233444 BTC", "Address copied", "http://mempool.local", "2 BTC", "Copy text", "Save image", "transactionExportText", "Generated locally by s/watcher", "addressPreviewLimit=10", "Show fewer addresses", "more '+(hiddenCount===1?'address':'addresses')", ".badge.rbf{max-width:100%;border-radius:6px"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("history page is missing %q", expected)
 		}
@@ -489,7 +490,7 @@ func TestTemplatesEscapeStoredValues(t *testing.T) {
 	response := httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 {
+	if strings.Contains(body, payload) || !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "op-return") || !strings.Contains(body, "OP_RETURN") || !strings.Contains(body, "Runes · runestone detected") || !strings.Contains(body, "Ordinals · 2 inscription envelopes detected") || !strings.Contains(body, ".rbf-warning{display:inline-block;max-width:100%") || strings.Count(body, "Replaceable — do not treat as final until confirmed.") != 1 || !strings.Contains(body, `id="remove-watch-confirm"`) || !strings.Contains(body, "Are you sure you want to remove this watch?") || !strings.Contains(body, `data-watch-name="&lt;script&gt;alert(&#34;xss&#34;)&lt;/script&gt;"`) || !strings.Contains(body, `data-watch-group="&lt;script&gt;alert(&#34;xss&#34;)&lt;/script&gt;"`) || !strings.Contains(body, "form.dataset.removeConfirmed='true'") || !strings.Contains(body, "form.requestSubmit()") {
 		t.Fatalf("stored values were not safely HTML-escaped: %s", body)
 	}
 }
@@ -542,6 +543,24 @@ func TestSecurityHeadersAndCrossSitePostProtection(t *testing.T) {
 	}
 }
 
+func TestFaviconUsesPackageIcon(t *testing.T) {
+	response := httptest.NewRecorder()
+	serveFavicon(response, httptest.NewRequest(http.MethodGet, "/favicon.png", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("favicon content type = %q, want image/png", got)
+	}
+	if !bytes.Equal(response.Body.Bytes(), swatcherassets.IconPNG) {
+		t.Fatal("favicon response does not match the package icon")
+	}
+	if strings.Count(indexHTML+transactionsHTML, `rel="icon" type="image/png" href="/favicon.png"`) != 2 {
+		t.Fatal("application pages do not reference the package favicon")
+	}
+}
+
 func TestSetPrivacyModeRequiresPasswordConfigurationAndVerifiesDisable(t *testing.T) {
 	dataDir := t.TempDir()
 	if err := SetPrivacyMode(dataDir, true, ""); err == nil || !strings.Contains(err.Error(), "Web Password") {
@@ -591,6 +610,9 @@ func TestSetDiscoveryGapPersistsValidatedValue(t *testing.T) {
 	if saved.DiscoveryGap != 37 {
 		t.Fatalf("saved discovery gap %d, want 37", saved.DiscoveryGap)
 	}
+	if err := SetDiscoveryGap(dataDir, 5_001); err != nil {
+		t.Fatalf("discovery gap remains artificially capped: %v", err)
+	}
 }
 
 func TestSetPrivacyIndicatorsPersistsSettings(t *testing.T) {
@@ -635,19 +657,41 @@ func TestPrivacyIndicatorsRenderAsInformationalBadges(t *testing.T) {
 	}
 }
 
-func TestSmartDiscoveryReportsUnsatisfiedSafetyLimit(t *testing.T) {
+func TestSmartDiscoveryExtendsBeyondFormerLimit(t *testing.T) {
+	master, err := hdkeychain.NewMaster([]byte("s-watcher unlimited discovery test"), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := master.Neuter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := bitcoin.DeriveAddresses(public.String(), "native-segwit", 500, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.state.DiscoveryGap = 20
-	a.state.Groups = []WatchGroup{{ID: "group", Source: "unused", ScriptType: "native-segwit", Count: 500}}
-	a.state.Watches = []Watch{{ID: "watch", GroupID: "group", Path: "m/0/499", Address: "address", KnownTx: []string{"used"}}}
+	a.state.Groups = []WatchGroup{{ID: "group", Source: public.String(), ScriptType: "native-segwit", Count: 500}}
+	for index, child := range derived {
+		scriptHash, hashErr := bitcoin.ScriptHash(child.Address)
+		if hashErr != nil {
+			t.Fatal(hashErr)
+		}
+		watch := Watch{ID: fmt.Sprintf("watch-%d", index), GroupID: "group", Path: child.Path, Address: child.Address, ScriptHash: scriptHash}
+		if index == 499 {
+			watch.KnownTx = []string{"used"}
+		}
+		a.state.Watches = append(a.state.Watches, watch)
+	}
 	if err := a.expandDiscoveryLocked(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(a.state.Groups[0].DiscoveryError, "500-address limit") {
-		t.Fatalf("missing discovery-limit warning: %q", a.state.Groups[0].DiscoveryError)
+	if a.state.Groups[0].Count != 520 || len(a.state.Watches) != 520 || a.state.Groups[0].DiscoveryError != "" {
+		t.Fatalf("smart discovery did not extend beyond 500: group=%+v watches=%d", a.state.Groups[0], len(a.state.Watches))
 	}
 }
 
@@ -737,8 +781,13 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	response = httptest.NewRecorder()
 	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "toLocaleLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") || !strings.Contains(body, "new URLSearchParams(new FormData(addForm))") {
+	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "function tagColorKey") || !strings.Contains(body, "normalize('NFKC')") || !strings.Contains(body, "toLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") || !strings.Contains(body, "new URLSearchParams(new FormData(addForm))") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{"watch-focus-pulse 5s", "prefers-reduced-motion:reduce", "function focusWatchRow", "classList.add('watch-focus')", "},5000)", "focusWatchRow(document.getElementById('view-'+addedWatch)"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("watch focus feedback is missing %q", expected)
+		}
 	}
 }
 
@@ -987,14 +1036,43 @@ func TestBulkAddressImportCreatesOneDeduplicatedGroup(t *testing.T) {
 		}
 	}
 
-	second := url.Values{"label": {"duplicate list"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + segwit}}
+	newAddress := "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+	second := url.Values{"label": {"duplicate list"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + newAddress}}
 	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(second.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "application/json")
 	response = httptest.NewRecorder()
 	a.addWatch(response, request)
-	if response.Code != http.StatusConflict || len(a.state.Groups) != 1 || len(a.state.Watches) != 3 || !strings.Contains(response.Body.String(), "Nothing was added") {
+	var conflict struct {
+		Duplicates []bulkOverlap `json:"duplicates"`
+		NewCount   int           `json:"newCount"`
+		CanSkip    bool          `json:"canSkip"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode bulk overlap: %v; body=%s", err, response.Body.String())
+	}
+	if response.Code != http.StatusConflict || len(a.state.Groups) != 1 || len(a.state.Watches) != 3 || !strings.Contains(response.Body.String(), "Nothing was added") || len(conflict.Duplicates) != 1 || conflict.Duplicates[0].Address != legacy || conflict.Duplicates[0].Watch != "donations / archive addresses" || conflict.NewCount != 1 || !conflict.CanSkip {
 		t.Fatalf("overlapping bulk import was not atomic: status=%d body=%s groups=%d watches=%d", response.Code, response.Body.String(), len(a.state.Groups), len(a.state.Watches))
+	}
+
+	second.Set("skip_existing", "on")
+	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(second.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusCreated || len(a.state.Groups) != 2 || len(a.state.Watches) != 4 || a.state.Groups[1].Count != 1 || a.state.Watches[3].Address != newAddress {
+		t.Fatalf("bulk import did not strip the existing address: status=%d body=%s groups=%+v watches=%+v", response.Code, response.Body.String(), a.state.Groups, a.state.Watches)
+	}
+
+	allExisting := url.Values{"label": {"all duplicate"}, "category": {"archive"}, "bulk_sources": {legacy + "\n" + segwit}, "skip_existing": {"on"}}
+	request = httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(allExisting.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response = httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusConflict || len(a.state.Groups) != 2 || len(a.state.Watches) != 4 || !strings.Contains(response.Body.String(), `"canSkip":false`) {
+		t.Fatalf("all-existing bulk import should remain rejected: status=%d body=%s groups=%d watches=%d", response.Code, response.Body.String(), len(a.state.Groups), len(a.state.Watches))
 	}
 }
 
@@ -1239,6 +1317,71 @@ func TestUpdateGroupPreservesDisabledPrivateNote(t *testing.T) {
 	a.updateGroup(response, request)
 	if response.Code != http.StatusSeeOther || a.state.Groups[0].Notes != "keep this context" {
 		t.Fatalf("note was not preserved: status=%d group=%+v", response.Code, a.state.Groups[0])
+	}
+}
+
+func TestUpdateDescriptorIncreasesCoverageWithoutLosingHistory(t *testing.T) {
+	master, err := hdkeychain.NewMaster([]byte("s-watcher descriptor coverage edit"), &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := master.Neuter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := "wpkh(" + public.String() + "/0/*)"
+	add := url.Values{"label": {"wallet"}, "category": {"savings"}, "source": {descriptor}}
+	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(add.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	a.addWatch(response, request)
+	if response.Code != http.StatusSeeOther || len(a.state.Watches) != defaultDiscoveryGap {
+		t.Fatalf("add descriptor: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
+	}
+
+	groupID := a.state.Groups[0].ID
+	originalID := a.state.Watches[0].ID
+	a.state.Watches[0].Initialized = true
+	a.state.Watches[0].KnownTx = []string{"historical"}
+	a.state.Events = []Event{{WatchID: originalID, GroupID: groupID, TxID: "historical"}}
+	response = httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	for _, expected := range []string{"Watched indexes per branch", "derivation_count", "derivationCounts=new Map", groupID} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("descriptor edit UI is missing %q", expected)
+		}
+	}
+
+	edit := url.Values{"label": {"wallet"}, "category": {"savings"}, "derivation_count": {"25"}, "notify_mode": {"all"}, "notify_minimum": {"0"}, "notify_after": {"0"}}
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", groupID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusSeeOther || a.state.Groups[0].Count != 25 || len(a.state.Watches) != 25 || len(a.state.Events) != 1 {
+		t.Fatalf("descriptor coverage did not increase cleanly: status=%d body=%s group=%+v watches=%d events=%d", response.Code, response.Body.String(), a.state.Groups[0], len(a.state.Watches), len(a.state.Events))
+	}
+	if a.state.Watches[0].ID != originalID || !a.state.Watches[0].Initialized || len(a.state.Watches[0].KnownTx) != 1 {
+		t.Fatalf("existing descriptor history was replaced: %+v", a.state.Watches[0])
+	}
+	for _, watch := range a.state.Watches[defaultDiscoveryGap:] {
+		if watch.Initialized || len(watch.KnownTx) != 0 {
+			t.Fatalf("newly derived address was not left for baseline scanning: %+v", watch)
+		}
+	}
+
+	edit.Set("derivation_count", "20")
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", groupID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusBadRequest || len(a.state.Watches) != 25 || !strings.Contains(response.Body.String(), "can only increase") {
+		t.Fatalf("descriptor coverage decrease was not rejected safely: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
 	}
 }
 
