@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,25 @@ import (
 type Client struct {
 	Address string
 	nextID  atomic.Uint64
+
+	mu      sync.Mutex
+	session *session
+
+	subscriptionsMu sync.Mutex
+	subscriptions   map[string]*subscription
+	changes         chan struct{}
+}
+
+type subscription struct {
+	fetchMu sync.Mutex
+	mu      sync.Mutex
+
+	session     *session
+	status      string
+	generation  uint64
+	dirty       bool
+	initialized bool
+	snapshot    Snapshot
 }
 
 type HistoryItem struct {
@@ -60,24 +80,111 @@ type Effect struct {
 }
 
 type response struct {
-	ID     uint64          `json:"id"`
-	Result json.RawMessage `json:"result"`
+	ID     *uint64           `json:"id,omitempty"`
+	Method string            `json:"method,omitempty"`
+	Params []json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage   `json:"result"`
 	Error  *struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
+type rpcError struct {
+	code    int
+	message string
+}
+
+func (e rpcError) Error() string {
+	return fmt.Sprintf("electrum error %d: %s", e.code, e.message)
+}
+
+type callResult struct {
+	result json.RawMessage
+	err    error
+}
+
+type session struct {
+	conn net.Conn
+
+	writeMu   sync.Mutex
+	pendingMu sync.Mutex
+	pending   map[uint64]chan callResult
+
+	done      chan struct{}
+	closeOnce sync.Once
+	onNotify  func(*session, response)
+}
+
 func (c *Client) Snapshot(ctx context.Context, scriptHash string) (Snapshot, error) {
-	var history []HistoryItem
-	if err := c.call(ctx, "blockchain.scripthash.get_history", []any{scriptHash}, &history); err != nil {
-		return Snapshot{}, err
+	sub := c.subscription(scriptHash)
+	sub.fetchMu.Lock()
+	defer sub.fetchMu.Unlock()
+
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		s, err := c.getSession(ctx)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if err := c.ensureSubscribed(ctx, s, scriptHash, sub); err != nil {
+			lastErr = err
+			if !retryable(err) {
+				return Snapshot{}, err
+			}
+			c.invalidate(s, err)
+			continue
+		}
+
+		sub.mu.Lock()
+		if sub.initialized && !sub.dirty {
+			snapshot := cloneSnapshot(sub.snapshot)
+			sub.mu.Unlock()
+			return snapshot, nil
+		}
+		generation := sub.generation
+		sub.mu.Unlock()
+
+		var history []HistoryItem
+		if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.get_history", []any{scriptHash}, &history); err != nil {
+			lastErr = err
+			if !retryable(err) {
+				return Snapshot{}, err
+			}
+			c.invalidate(s, err)
+			continue
+		}
+		var balance Balance
+		if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.get_balance", []any{scriptHash}, &balance); err != nil {
+			lastErr = err
+			if !retryable(err) {
+				return Snapshot{}, err
+			}
+			c.invalidate(s, err)
+			continue
+		}
+
+		snapshot := Snapshot{Balance: balance, History: history}
+		sub.mu.Lock()
+		sub.snapshot = cloneSnapshot(snapshot)
+		sub.initialized = true
+		sub.dirty = sub.generation != generation
+		sub.mu.Unlock()
+		return snapshot, nil
 	}
-	var balance Balance
-	if err := c.call(ctx, "blockchain.scripthash.get_balance", []any{scriptHash}, &balance); err != nil {
-		return Snapshot{}, err
+	return Snapshot{}, lastErr
+}
+
+// Changes reports script-hash subscription updates. The channel is buffered
+// and deliberately coalesces bursts so callers can refresh all dirty watches
+// once instead of starting one scan per Electrum notification.
+func (c *Client) Changes() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.changes == nil {
+		c.changes = make(chan struct{}, 1)
 	}
-	return Snapshot{Balance: balance, History: history}, nil
+	return c.changes
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -205,39 +312,242 @@ func (c *Client) transaction(ctx context.Context, txID string) (bitcoin.Transact
 }
 
 func (c *Client) call(ctx context.Context, method string, params []any, out any) error {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		s, err := c.getSession(ctx)
+		if err != nil {
+			return err
+		}
+		err = s.call(ctx, c.nextID.Add(1), method, params, out)
+		if err == nil || !retryable(err) {
+			return err
+		}
+		lastErr = err
+		c.invalidate(s, err)
+	}
+	return lastErr
+}
+
+func (c *Client) getSession(ctx context.Context) (*session, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.session != nil && !c.session.closed() {
+		return c.session, nil
+	}
+
 	dialer := net.Dialer{Timeout: 5 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", c.Address)
 	if err != nil {
-		return fmt.Errorf("connect to electrs: %w", err)
+		return nil, fmt.Errorf("connect to electrs: %w", err)
 	}
-	defer conn.Close()
+	s := &session{
+		conn:     conn,
+		pending:  make(map[uint64]chan callResult),
+		done:     make(chan struct{}),
+		onNotify: c.handleNotification,
+	}
+	c.session = s
+	go s.readLoop()
+	return s, nil
+}
+
+func (c *Client) invalidate(s *session, err error) {
+	c.mu.Lock()
+	if c.session == s {
+		c.session = nil
+	}
+	c.mu.Unlock()
+	s.close(err)
+}
+
+func (c *Client) subscription(scriptHash string) *subscription {
+	c.subscriptionsMu.Lock()
+	defer c.subscriptionsMu.Unlock()
+	if c.subscriptions == nil {
+		c.subscriptions = make(map[string]*subscription)
+	}
+	if c.subscriptions[scriptHash] == nil {
+		c.subscriptions[scriptHash] = &subscription{dirty: true}
+	}
+	return c.subscriptions[scriptHash]
+}
+
+func (c *Client) ensureSubscribed(ctx context.Context, s *session, scriptHash string, sub *subscription) error {
+	sub.mu.Lock()
+	alreadySubscribed := sub.session == s
+	sub.mu.Unlock()
+	if alreadySubscribed {
+		return nil
+	}
+
+	var status *string
+	if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.subscribe", []any{scriptHash}, &status); err != nil {
+		return err
+	}
+	statusValue := ""
+	if status != nil {
+		statusValue = *status
+	}
+	sub.mu.Lock()
+	if sub.session != s || sub.status != statusValue {
+		sub.generation++
+		if sub.initialized && sub.status != statusValue {
+			sub.dirty = true
+		}
+	}
+	sub.session = s
+	sub.status = statusValue
+	sub.mu.Unlock()
+	return nil
+}
+
+func (c *Client) handleNotification(s *session, message response) {
+	if message.Method != "blockchain.scripthash.subscribe" || len(message.Params) < 2 {
+		return
+	}
+	var scriptHash string
+	var status *string
+	if json.Unmarshal(message.Params[0], &scriptHash) != nil || json.Unmarshal(message.Params[1], &status) != nil || scriptHash == "" {
+		return
+	}
+	statusValue := ""
+	if status != nil {
+		statusValue = *status
+	}
+	sub := c.subscription(scriptHash)
+	sub.mu.Lock()
+	if sub.session != s || sub.status == statusValue {
+		sub.mu.Unlock()
+		return
+	}
+	sub.status = statusValue
+	sub.generation++
+	sub.dirty = true
+	sub.mu.Unlock()
+
+	c.mu.Lock()
+	changes := c.changes
+	c.mu.Unlock()
+	if changes != nil {
+		select {
+		case changes <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func cloneSnapshot(snapshot Snapshot) Snapshot {
+	clone := snapshot
+	clone.History = append([]HistoryItem(nil), snapshot.History...)
+	return clone
+}
+
+func retryable(err error) bool {
+	var rpcErr rpcError
+	return err != nil && !errors.As(err, &rpcErr) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+func (s *session) call(ctx context.Context, id uint64, method string, params []any, out any) error {
+	result := make(chan callResult, 1)
+	s.pendingMu.Lock()
+	if s.closed() {
+		s.pendingMu.Unlock()
+		return errors.New("electrum connection is closed")
+	}
+	s.pending[id] = result
+	s.pendingMu.Unlock()
+
+	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
+	s.writeMu.Lock()
 	deadline := time.Now().Add(10 * time.Second)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	_ = conn.SetDeadline(deadline)
-
-	id := c.nextID.Add(1)
-	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	_ = s.conn.SetWriteDeadline(deadline)
+	err := json.NewEncoder(s.conn).Encode(req)
+	_ = s.conn.SetWriteDeadline(time.Time{})
+	s.writeMu.Unlock()
+	if err != nil {
+		s.removePending(id)
+		s.close(fmt.Errorf("write electrum request: %w", err))
 		return fmt.Errorf("write electrum request: %w", err)
 	}
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
-	if err != nil {
-		return fmt.Errorf("read electrum response: %w", err)
+
+	select {
+	case reply := <-result:
+		if reply.err != nil {
+			return reply.err
+		}
+		if err := json.Unmarshal(reply.result, out); err != nil {
+			return fmt.Errorf("decode electrum result: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		s.removePending(id)
+		return ctx.Err()
+	case <-s.done:
+		s.removePending(id)
+		return errors.New("electrum connection closed")
 	}
-	var res response
-	if err := json.Unmarshal(line, &res); err != nil {
-		return fmt.Errorf("decode electrum response: %w", err)
+}
+
+func (s *session) readLoop() {
+	decoder := json.NewDecoder(bufio.NewReader(s.conn))
+	for {
+		var message response
+		if err := decoder.Decode(&message); err != nil {
+			s.close(fmt.Errorf("read electrum response: %w", err))
+			return
+		}
+		if message.ID == nil {
+			if s.onNotify != nil && message.Method != "" {
+				s.onNotify(s, message)
+			}
+			continue
+		}
+		s.pendingMu.Lock()
+		pending := s.pending[*message.ID]
+		delete(s.pending, *message.ID)
+		s.pendingMu.Unlock()
+		if pending == nil {
+			continue
+		}
+		if message.Error != nil {
+			pending <- callResult{err: rpcError{code: message.Error.Code, message: message.Error.Message}}
+		} else {
+			pending <- callResult{result: message.Result}
+		}
 	}
-	if res.ID != id {
-		return errors.New("electrum returned an unexpected response id")
+}
+
+func (s *session) removePending(id uint64) {
+	s.pendingMu.Lock()
+	delete(s.pending, id)
+	s.pendingMu.Unlock()
+}
+
+func (s *session) close(err error) {
+	if err == nil {
+		err = errors.New("electrum connection closed")
 	}
-	if res.Error != nil {
-		return fmt.Errorf("electrum error %d: %s", res.Error.Code, res.Error.Message)
+	s.closeOnce.Do(func() {
+		_ = s.conn.Close()
+		close(s.done)
+		s.pendingMu.Lock()
+		pending := s.pending
+		s.pending = make(map[uint64]chan callResult)
+		s.pendingMu.Unlock()
+		for _, waiter := range pending {
+			waiter <- callResult{err: err}
+		}
+	})
+}
+
+func (s *session) closed() bool {
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
 	}
-	if err := json.Unmarshal(res.Result, out); err != nil {
-		return fmt.Errorf("decode electrum result: %w", err)
-	}
-	return nil
 }
