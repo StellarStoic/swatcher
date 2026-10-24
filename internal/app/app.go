@@ -1659,9 +1659,16 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) pollLoop() {
+	changes := a.client.Changes()
+	a.poll()
+	ticker := time.NewTicker(a.interval)
+	defer ticker.Stop()
 	for {
+		select {
+		case <-ticker.C:
+		case <-changes:
+		}
 		a.poll()
-		time.Sleep(a.interval)
 	}
 }
 
