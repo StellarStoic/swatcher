@@ -34,21 +34,22 @@ import (
 )
 
 type Watch struct {
-	ID           string    `json:"id"`
-	GroupID      string    `json:"groupId,omitempty"`
-	Label        string    `json:"label"`
-	Address      string    `json:"address"`
-	Path         string    `json:"path,omitempty"`
-	ScriptHash   string    `json:"scriptHash"`
-	Confirmed    int64     `json:"confirmed"`
-	Unconfirmed  int64     `json:"unconfirmed"`
-	KnownTx      []string  `json:"knownTx"`
-	Initialized  bool      `json:"initialized"`
-	LastChecked  time.Time `json:"lastChecked,omitempty"`
-	LastError    string    `json:"lastError,omitempty"`
-	LastTxID     string    `json:"lastTxId,omitempty"`
-	LastTxHeight int64     `json:"lastTxHeight,omitempty"`
-	LastTxAt     time.Time `json:"lastTxAt,omitempty"`
+	ID             string    `json:"id"`
+	GroupID        string    `json:"groupId,omitempty"`
+	Label          string    `json:"label"`
+	Address        string    `json:"address"`
+	Path           string    `json:"path,omitempty"`
+	ScriptHash     string    `json:"scriptHash"`
+	Confirmed      int64     `json:"confirmed"`
+	Unconfirmed    int64     `json:"unconfirmed"`
+	KnownTx        []string  `json:"knownTx"`
+	Initialized    bool      `json:"initialized"`
+	ElectrumStatus *string   `json:"electrumStatus,omitempty"`
+	LastChecked    time.Time `json:"lastChecked,omitempty"`
+	LastError      string    `json:"lastError,omitempty"`
+	LastTxID       string    `json:"lastTxId,omitempty"`
+	LastTxHeight   int64     `json:"lastTxHeight,omitempty"`
+	LastTxAt       time.Time `json:"lastTxAt,omitempty"`
 }
 
 type WatchGroup struct {
@@ -1543,11 +1544,15 @@ func mergeWatchState(target *Watch, duplicate Watch) {
 		target.Unconfirmed = duplicate.Unconfirmed
 		target.LastChecked = duplicate.LastChecked
 		target.LastError = duplicate.LastError
+		target.ElectrumStatus = duplicate.ElectrumStatus
 	}
 	if duplicate.LastTxAt.After(target.LastTxAt) || (target.LastTxID == "" && duplicate.LastTxID != "") {
 		target.LastTxID = duplicate.LastTxID
 		target.LastTxHeight = duplicate.LastTxHeight
 		target.LastTxAt = duplicate.LastTxAt
+	}
+	if target.ElectrumStatus == nil && duplicate.ElectrumStatus != nil {
+		target.ElectrumStatus = duplicate.ElectrumStatus
 	}
 	target.Initialized = target.Initialized || duplicate.Initialized
 }
@@ -1660,16 +1665,38 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) pollLoop() {
 	changes := a.client.Changes()
-	a.poll()
+	a.poll(nil)
 	ticker := time.NewTicker(a.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			scriptHashes := a.scriptHashesNeedingRefresh()
+			if len(scriptHashes) != 0 {
+				a.poll(scriptHashes)
+			}
 		case <-changes:
+			scriptHashes := a.client.TakeChanges()
+			if len(scriptHashes) != 0 {
+				a.poll(scriptHashes)
+			}
 		}
-		a.poll()
 	}
+}
+
+func (a *App) scriptHashesNeedingRefresh() []string {
+	a.mu.RLock()
+	watches := append([]Watch(nil), a.state.Watches...)
+	eventVersions := eventDetailVersions(a.state.Events)
+	a.mu.RUnlock()
+
+	result := make([]string, 0)
+	for _, watch := range watches {
+		if !watch.Initialized || watch.LastError != "" || watchNeedsEventDetails(watch, eventVersions) || a.client.NeedsRefresh(watch.ScriptHash) {
+			result = append(result, watch.ScriptHash)
+		}
+	}
+	return result
 }
 
 type pollResult struct {
@@ -1683,22 +1710,48 @@ type pollResult struct {
 	lastTxHeight int64
 	lastTxAt     time.Time
 	checkedAt    time.Time
+	unchanged    bool
 	err          error
 }
 
-func (a *App) poll() {
+const (
+	largeRefreshThreshold = 1_000
+	largeRefreshPace      = 20 * time.Millisecond
+)
+
+// poll refreshes every watch when scriptHashes is nil. Subscription wake-ups
+// pass only the changed script hashes so one active address cannot cause a
+// full-wallet scan.
+func (a *App) poll(scriptHashes []string) {
 	a.mu.RLock()
-	watches := append([]Watch(nil), a.state.Watches...)
+	allWatches := append([]Watch(nil), a.state.Watches...)
 	eventVersions := eventDetailVersions(a.state.Events)
 	a.mu.RUnlock()
-	groupScripts := make(map[string][][]byte)
-	groupScriptAddresses := make(map[string]map[string]string)
-	groupKnown := make(map[string]map[string]bool)
-	groupInitialized := make(map[string]bool)
+
+	watches := watchesForPoll(allWatches, scriptHashes)
+	if len(watches) == 0 {
+		return
+	}
+
+	targetGroups := make(map[string]struct{}, len(watches))
 	for _, watch := range watches {
 		groupID := watch.GroupID
 		if groupID == "" {
 			groupID = watch.ID
+		}
+		targetGroups[groupID] = struct{}{}
+	}
+	groupScripts := make(map[string][][]byte)
+	groupScriptAddresses := make(map[string]map[string]string)
+	groupKnown := make(map[string]map[string]bool)
+	groupInitialized := make(map[string]bool)
+	for _, watch := range allWatches {
+		groupID := watch.GroupID
+		if groupID == "" {
+			groupID = watch.ID
+		}
+		if _, ok := targetGroups[groupID]; !ok {
+			continue
 		}
 		script, err := bitcoin.ScriptPubKey(watch.Address)
 		if err == nil {
@@ -1729,7 +1782,16 @@ func (a *App) poll() {
 			}
 		}()
 	}
-	for _, watch := range watches {
+	var pace *time.Ticker
+	if len(watches) > largeRefreshThreshold {
+		pace = time.NewTicker(largeRefreshPace)
+		defer pace.Stop()
+		log.Printf("electrum refresh: pacing %d watched scripts at up to %d per second", len(watches), int(time.Second/largeRefreshPace))
+	}
+	for index, watch := range watches {
+		if pace != nil && index != 0 {
+			<-pace.C
+		}
 		jobs <- watch
 	}
 	close(jobs)
@@ -1753,6 +1815,10 @@ func (a *App) poll() {
 		if result.err != nil {
 			current.LastError = result.err.Error()
 			log.Printf("poll %s: %v", result.watch.Label, result.err)
+			continue
+		}
+		if result.unchanged {
+			current.LastError = ""
 			continue
 		}
 		known := make(map[string]bool, len(current.KnownTx))
@@ -1818,6 +1884,8 @@ func (a *App) poll() {
 			}
 		}
 		current.Confirmed, current.Unconfirmed = result.snapshot.Balance.Confirmed, result.snapshot.Balance.Unconfirmed
+		status := result.snapshot.Status
+		current.ElectrumStatus = &status
 		current.LastTxID, current.LastTxHeight, current.LastTxAt = result.lastTxID, result.lastTxHeight, result.lastTxAt
 		current.Initialized, current.LastError = true, ""
 	}
@@ -1829,6 +1897,23 @@ func (a *App) poll() {
 	}
 	a.mu.Unlock()
 	a.deliverPending()
+}
+
+func watchesForPoll(watches []Watch, scriptHashes []string) []Watch {
+	if scriptHashes == nil {
+		return watches
+	}
+	wanted := make(map[string]struct{}, len(scriptHashes))
+	for _, scriptHash := range scriptHashes {
+		wanted[scriptHash] = struct{}{}
+	}
+	selected := make([]Watch, 0, len(scriptHashes))
+	for _, watch := range watches {
+		if _, ok := wanted[watch.ScriptHash]; ok {
+			selected = append(selected, watch)
+		}
+	}
+	return selected
 }
 
 func eventDetailVersions(events []Event) map[string]int {
@@ -1848,6 +1933,19 @@ func eventDetailVersions(events []Event) map[string]int {
 	return versions
 }
 
+func watchNeedsEventDetails(watch Watch, versions map[string]int) bool {
+	groupID := watch.GroupID
+	if groupID == "" {
+		groupID = watch.ID
+	}
+	for _, txID := range watch.KnownTx {
+		if versions[groupID+"\x00"+txID] < currentEventDetailsVersion {
+			return true
+		}
+	}
+	return false
+}
+
 func addressAmountsComplete(addresses []string, amounts map[string]uint64) bool {
 	for _, address := range addresses {
 		if _, exists := amounts[address]; !exists {
@@ -1865,8 +1963,17 @@ func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVer
 	result := pollResult{watch: watch, groupID: groupID, effects: make(map[string]electrum.Effect), eventTimes: make(map[string]time.Time), notifyNew: make(map[string]bool), lastTxID: watch.LastTxID, lastTxHeight: watch.LastTxHeight, lastTxAt: watch.LastTxAt, checkedAt: time.Now().UTC()}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	result.snapshot, result.err = a.client.Snapshot(ctx, watch.ScriptHash)
+	knownStatus := watch.ElectrumStatus
+	if watchNeedsEventDetails(watch, eventVersions) {
+		knownStatus = nil
+	}
+	var available bool
+	result.snapshot, available, result.err = a.client.SnapshotSince(ctx, watch.ScriptHash, knownStatus)
 	if result.err != nil {
+		return result
+	}
+	if !available {
+		result.unchanged = true
 		return result
 	}
 	if latest, ok := latestHistory(result.snapshot.History); ok {

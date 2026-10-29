@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -133,6 +134,141 @@ func TestSnapshotSubscribesCachesAndRefreshesOnNotification(t *testing.T) {
 	}
 }
 
+func TestSnapshotSinceUsesPersistedStatusWithoutReadingHistoryOrBalance(t *testing.T) {
+	server := newTestElectrumServer(t)
+	client := &Client{Address: server.address()}
+	changes := client.Changes()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	knownStatus := "initial"
+	if !client.NeedsRefresh("script-hash") {
+		t.Fatal("unknown script hash did not require its initial refresh")
+	}
+	snapshot, refreshed, err := client.SnapshotSince(ctx, "script-hash", &knownStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed {
+		t.Fatal("matching persisted status caused an unnecessary refresh")
+	}
+	if snapshot.Balance != (Balance{}) || len(snapshot.History) != 0 || snapshot.Status != "" {
+		t.Fatalf("unchanged snapshot = %+v, want zero value", snapshot)
+	}
+	if got := server.methodCount("blockchain.scripthash.subscribe"); got != 1 {
+		t.Fatalf("subscribe calls = %d, want 1", got)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_history"); got != 0 {
+		t.Fatalf("history calls = %d, want 0", got)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_balance"); got != 0 {
+		t.Fatalf("balance calls = %d, want 0", got)
+	}
+	if client.NeedsRefresh("script-hash") {
+		t.Fatal("unchanged subscribed script hash still requires refresh")
+	}
+
+	server.setState("changed", 84)
+	server.notify(t, "script-hash", "changed")
+	select {
+	case <-changes:
+	case <-ctx.Done():
+		t.Fatal("subscription change was not reported")
+	}
+	if got := client.TakeChanges(); len(got) != 1 || got[0] != "script-hash" {
+		t.Fatalf("changed script hashes = %v, want [script-hash]", got)
+	}
+	if !client.NeedsRefresh("script-hash") {
+		t.Fatal("dirty subscription was not marked for refresh")
+	}
+
+	snapshot, refreshed, err = client.SnapshotSince(ctx, "script-hash", &knownStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !refreshed {
+		t.Fatal("changed status did not refresh the snapshot")
+	}
+	if snapshot.Status != "changed" || snapshot.Balance.Confirmed != 84 {
+		t.Fatalf("refreshed snapshot = %+v", snapshot)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_history"); got != 1 {
+		t.Fatalf("history calls after change = %d, want 1", got)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_balance"); got != 1 {
+		t.Fatalf("balance calls after change = %d, want 1", got)
+	}
+	if client.NeedsRefresh("script-hash") {
+		t.Fatal("refreshed subscription remained dirty")
+	}
+}
+
+func TestChangesRetainDistinctHashesWhenWakeupsCoalesce(t *testing.T) {
+	server := newTestElectrumServer(t)
+	client := &Client{Address: server.address()}
+	changes := client.Changes()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	knownStatus := "initial"
+
+	for _, scriptHash := range []string{"hash-b", "hash-a"} {
+		if _, refreshed, err := client.SnapshotSince(ctx, scriptHash, &knownStatus); err != nil {
+			t.Fatal(err)
+		} else if refreshed {
+			t.Fatalf("%s unexpectedly refreshed", scriptHash)
+		}
+	}
+	server.notify(t, "hash-b", "changed-b")
+	server.notify(t, "hash-a", "changed-a")
+	select {
+	case <-changes:
+	case <-ctx.Done():
+		t.Fatal("subscription changes were not reported")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	seen := make(map[string]bool)
+	for {
+		for _, scriptHash := range client.TakeChanges() {
+			seen[scriptHash] = true
+		}
+		if seen["hash-a"] && seen["hash-b"] {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("changed script hashes = %v, want both hashes", seen)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestSnapshotSinceRestoredWalletAvoidsHistoryAndBalanceSweep(t *testing.T) {
+	server := newTestElectrumServer(t)
+	client := &Client{Address: server.address()}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	knownStatus := "initial"
+	const watches = 2_048
+
+	for index := 0; index < watches; index++ {
+		scriptHash := fmt.Sprintf("hash-%d", index)
+		if _, available, err := client.SnapshotSince(ctx, scriptHash, &knownStatus); err != nil {
+			t.Fatal(err)
+		} else if available {
+			t.Fatalf("%s unnecessarily loaded history and balance", scriptHash)
+		}
+	}
+	if got := server.methodCount("blockchain.scripthash.subscribe"); got != watches {
+		t.Fatalf("subscribe calls = %d, want %d", got, watches)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_history"); got != 0 {
+		t.Fatalf("history calls = %d, want 0", got)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_balance"); got != 0 {
+		t.Fatalf("balance calls = %d, want 0", got)
+	}
+}
+
 func TestSnapshotReconnectsAndResubscribes(t *testing.T) {
 	server := newTestElectrumServer(t)
 	client := &Client{Address: server.address()}
@@ -157,6 +293,9 @@ func TestSnapshotReconnectsAndResubscribes(t *testing.T) {
 			t.Fatal("client did not observe the disconnected session")
 		}
 		time.Sleep(time.Millisecond)
+	}
+	if !client.NeedsRefresh("script-hash") {
+		t.Fatal("disconnected subscription was not marked for refresh")
 	}
 
 	snapshot, err := client.Snapshot(ctx, "script-hash")

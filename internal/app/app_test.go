@@ -445,6 +445,35 @@ func TestHistoryImportNotificationClassification(t *testing.T) {
 	}
 }
 
+func TestWatchesForPollTargetsOnlyChangedScriptHashes(t *testing.T) {
+	watches := make([]Watch, 18_213)
+	for index := range watches {
+		watches[index] = Watch{ID: fmt.Sprintf("watch-%d", index), ScriptHash: fmt.Sprintf("hash-%d", index)}
+	}
+
+	selected := watchesForPoll(watches, []string{"hash-17234"})
+	if len(selected) != 1 || selected[0].ID != "watch-17234" {
+		t.Fatalf("selected watches = %#v", selected)
+	}
+	if all := watchesForPoll(watches, nil); len(all) != len(watches) {
+		t.Fatalf("fallback scan selected %d watches, want %d", len(all), len(watches))
+	}
+	if none := watchesForPoll(watches, []string{"not-watched"}); len(none) != 0 {
+		t.Fatalf("unknown script hash selected %d watches", len(none))
+	}
+}
+
+func TestWatchNeedsEventDetails(t *testing.T) {
+	watch := Watch{ID: "watch", GroupID: "group", KnownTx: []string{"tx"}}
+	if !watchNeedsEventDetails(watch, nil) {
+		t.Fatal("missing event details were treated as complete")
+	}
+	versions := map[string]int{"group\x00tx": currentEventDetailsVersion}
+	if watchNeedsEventDetails(watch, versions) {
+		t.Fatal("current event details were treated as stale")
+	}
+}
+
 func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {
