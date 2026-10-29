@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,7 +29,9 @@ type Client struct {
 
 	subscriptionsMu sync.Mutex
 	subscriptions   map[string]*subscription
+	changesMu       sync.Mutex
 	changes         chan struct{}
+	changed         map[string]struct{}
 }
 
 type subscription struct {
@@ -57,6 +60,7 @@ type Balance struct {
 type Snapshot struct {
 	Balance Balance
 	History []HistoryItem
+	Status  string
 }
 
 type Header struct {
@@ -117,6 +121,15 @@ type session struct {
 }
 
 func (c *Client) Snapshot(ctx context.Context, scriptHash string) (Snapshot, error) {
+	snapshot, _, err := c.SnapshotSince(ctx, scriptHash, nil)
+	return snapshot, err
+}
+
+// SnapshotSince returns snapshot data when it was fetched or is cached. A
+// matching persisted status lets callers restore thousands of watches without
+// re-reading every history and balance; in that case the bool is false because
+// only the caller's persisted application state is available.
+func (c *Client) SnapshotSince(ctx context.Context, scriptHash string, knownStatus *string) (Snapshot, bool, error) {
 	sub := c.subscription(scriptHash)
 	sub.fetchMu.Lock()
 	defer sub.fetchMu.Unlock()
@@ -125,31 +138,39 @@ func (c *Client) Snapshot(ctx context.Context, scriptHash string) (Snapshot, err
 	for attempt := 0; attempt < 2; attempt++ {
 		s, err := c.getSession(ctx)
 		if err != nil {
-			return Snapshot{}, err
+			return Snapshot{}, false, err
 		}
 		if err := c.ensureSubscribed(ctx, s, scriptHash, sub); err != nil {
 			lastErr = err
 			if !retryable(err) {
-				return Snapshot{}, err
+				return Snapshot{}, false, err
 			}
 			c.invalidate(s, err)
 			continue
 		}
 
 		sub.mu.Lock()
+		if !sub.initialized && knownStatus != nil && sub.status == *knownStatus {
+			sub.snapshot = Snapshot{Status: sub.status}
+			sub.initialized = true
+			sub.dirty = false
+			sub.mu.Unlock()
+			return Snapshot{}, false, nil
+		}
 		if sub.initialized && !sub.dirty {
 			snapshot := cloneSnapshot(sub.snapshot)
 			sub.mu.Unlock()
-			return snapshot, nil
+			return snapshot, true, nil
 		}
 		generation := sub.generation
+		status := sub.status
 		sub.mu.Unlock()
 
 		var history []HistoryItem
 		if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.get_history", []any{scriptHash}, &history); err != nil {
 			lastErr = err
 			if !retryable(err) {
-				return Snapshot{}, err
+				return Snapshot{}, false, err
 			}
 			c.invalidate(s, err)
 			continue
@@ -158,33 +179,67 @@ func (c *Client) Snapshot(ctx context.Context, scriptHash string) (Snapshot, err
 		if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.get_balance", []any{scriptHash}, &balance); err != nil {
 			lastErr = err
 			if !retryable(err) {
-				return Snapshot{}, err
+				return Snapshot{}, false, err
 			}
 			c.invalidate(s, err)
 			continue
 		}
 
-		snapshot := Snapshot{Balance: balance, History: history}
+		snapshot := Snapshot{Balance: balance, History: history, Status: status}
 		sub.mu.Lock()
 		sub.snapshot = cloneSnapshot(snapshot)
 		sub.initialized = true
 		sub.dirty = sub.generation != generation
 		sub.mu.Unlock()
-		return snapshot, nil
+		return snapshot, true, nil
 	}
-	return Snapshot{}, lastErr
+	return Snapshot{}, false, lastErr
 }
 
-// Changes reports script-hash subscription updates. The channel is buffered
-// and deliberately coalesces bursts so callers can refresh all dirty watches
-// once instead of starting one scan per Electrum notification.
+// Changes wakes callers after script-hash subscription updates. The channel
+// coalesces bursts; TakeChanges retains the distinct hashes behind each wake.
 func (c *Client) Changes() <-chan struct{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.changesMu.Lock()
+	defer c.changesMu.Unlock()
 	if c.changes == nil {
 		c.changes = make(chan struct{}, 1)
 	}
 	return c.changes
+}
+
+// TakeChanges drains the distinct script hashes reported by subscription
+// notifications. The wake-up channel may coalesce, but this set does not.
+func (c *Client) TakeChanges() []string {
+	c.changesMu.Lock()
+	changed := c.changed
+	c.changed = nil
+	c.changesMu.Unlock()
+
+	result := make([]string, 0, len(changed))
+	for scriptHash := range changed {
+		result = append(result, scriptHash)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// NeedsRefresh reports whether a script hash still needs its first snapshot,
+// has a dirty subscription, or must be resubscribed after a disconnect.
+func (c *Client) NeedsRefresh(scriptHash string) bool {
+	c.mu.Lock()
+	s := c.session
+	c.mu.Unlock()
+
+	c.subscriptionsMu.Lock()
+	sub := c.subscriptions[scriptHash]
+	c.subscriptionsMu.Unlock()
+	if sub == nil || s == nil || s.closed() {
+		return true
+	}
+	sub.mu.Lock()
+	needsRefresh := sub.session != s || !sub.initialized || sub.dirty
+	sub.mu.Unlock()
+	return needsRefresh
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -425,9 +480,13 @@ func (c *Client) handleNotification(s *session, message response) {
 	sub.dirty = true
 	sub.mu.Unlock()
 
-	c.mu.Lock()
+	c.changesMu.Lock()
+	if c.changed == nil {
+		c.changed = make(map[string]struct{})
+	}
+	c.changed[scriptHash] = struct{}{}
 	changes := c.changes
-	c.mu.Unlock()
+	c.changesMu.Unlock()
 	if changes != nil {
 		select {
 		case changes <- struct{}{}:
