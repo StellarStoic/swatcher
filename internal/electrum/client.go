@@ -43,6 +43,7 @@ type subscription struct {
 	generation  uint64
 	dirty       bool
 	initialized bool
+	hasSnapshot bool
 	snapshot    Snapshot
 }
 
@@ -168,16 +169,22 @@ func (c *Client) SnapshotSince(ctx context.Context, scriptHash string, knownStat
 
 		sub.mu.Lock()
 		if !sub.initialized && knownStatus != nil && sub.status == *knownStatus {
-			sub.snapshot = Snapshot{Status: sub.status}
 			sub.initialized = true
+			sub.hasSnapshot = false
 			sub.dirty = false
 			sub.mu.Unlock()
 			return Snapshot{}, false, nil
 		}
 		if sub.initialized && !sub.dirty {
-			snapshot := cloneSnapshot(sub.snapshot)
-			sub.mu.Unlock()
-			return snapshot, true, nil
+			if sub.hasSnapshot {
+				snapshot := cloneSnapshot(sub.snapshot)
+				sub.mu.Unlock()
+				return snapshot, true, nil
+			}
+			if knownStatus != nil && sub.status == *knownStatus {
+				sub.mu.Unlock()
+				return Snapshot{}, false, nil
+			}
 		}
 		generation := sub.generation
 		status := sub.status
@@ -216,6 +223,7 @@ func (c *Client) SnapshotSince(ctx context.Context, scriptHash string, knownStat
 		sub.mu.Lock()
 		sub.snapshot = cloneSnapshot(snapshot)
 		sub.initialized = true
+		sub.hasSnapshot = true
 		sub.dirty = sub.generation != generation
 		sub.mu.Unlock()
 		return snapshot, true, nil

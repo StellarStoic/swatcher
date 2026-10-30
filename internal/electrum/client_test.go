@@ -226,6 +226,47 @@ func TestSnapshotSinceUsesPersistedStatusWithoutReadingHistoryOrBalance(t *testi
 	}
 }
 
+func TestSnapshotSinceKeepsPersistedStateAcrossUnchangedReconnect(t *testing.T) {
+	server := newTestElectrumServer(t)
+	client := &Client{Address: server.address()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	knownStatus := "initial"
+
+	if _, available, err := client.SnapshotSince(ctx, "script-hash", &knownStatus); err != nil {
+		t.Fatal(err)
+	} else if available {
+		t.Fatal("matching persisted status loaded a snapshot")
+	}
+	server.disconnect(t)
+	waitForDisconnectedSession(t, client)
+	if !client.NeedsRefresh("script-hash") {
+		t.Fatal("disconnected restored subscription was not marked for refresh")
+	}
+
+	snapshot, available, err := client.SnapshotSince(ctx, "script-hash", &knownStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if available || snapshot.Balance != (Balance{}) || len(snapshot.History) != 0 || snapshot.Status != "" {
+		t.Fatalf("unchanged reconnect returned %+v, available=%v; want persisted application state", snapshot, available)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_history"); got != 0 {
+		t.Fatalf("history calls after unchanged reconnect = %d, want 0", got)
+	}
+	if got := server.methodCount("blockchain.scripthash.get_balance"); got != 0 {
+		t.Fatalf("balance calls after unchanged reconnect = %d, want 0", got)
+	}
+
+	snapshot, available, err = client.SnapshotSince(ctx, "script-hash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !available || snapshot.Balance.Confirmed != 42 {
+		t.Fatalf("caller without persisted state received %+v, available=%v", snapshot, available)
+	}
+}
+
 func TestChangesRetainDistinctHashesWhenWakeupsCoalesce(t *testing.T) {
 	server := newTestElectrumServer(t)
 	client := &Client{Address: server.address()}
@@ -303,20 +344,7 @@ func TestSnapshotReconnectsAndResubscribes(t *testing.T) {
 	}
 	server.setState("after-reconnect", 99)
 	server.disconnect(t)
-
-	deadline := time.Now().Add(time.Second)
-	for {
-		client.mu.Lock()
-		closed := client.session == nil || client.session.closed()
-		client.mu.Unlock()
-		if closed {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("client did not observe the disconnected session")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitForDisconnectedSession(t, client)
 	if !client.NeedsRefresh("script-hash") {
 		t.Fatal("disconnected subscription was not marked for refresh")
 	}
@@ -333,6 +361,23 @@ func TestSnapshotReconnectsAndResubscribes(t *testing.T) {
 	}
 	if violations := server.unsubscribedQueries(); len(violations) != 0 {
 		t.Fatalf("queries were sent before resubscribing: %v", violations)
+	}
+}
+
+func waitForDisconnectedSession(t *testing.T, client *Client) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		client.mu.Lock()
+		closed := client.session == nil || client.session.closed()
+		client.mu.Unlock()
+		if closed {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("client did not observe the disconnected session")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
