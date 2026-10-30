@@ -129,6 +129,8 @@ From there the whole flow is inside the Web UI: add a watch, and the first Elect
 
 The baseline stores Electrum's status hash for each watched script. Later subscription notifications refresh only the script hashes that actually changed. The 30-second recovery check selects only new, failed, dirty, or disconnected watches; it does not scan healthy unchanged watches. After a service restart, s/watcher resubscribes and compares the persisted status first, so an unchanged large wallet does not reread every address history and balance. Refreshes larger than 1,000 scripts are paced at no more than 50 scripts per second to avoid overwhelming Electrs during a first baseline or reconnection.
 
+While a large refresh is running, the dashboard shows completed and total address counts and the service log reports progress, a 30-second heartbeat while Electrs is slow, and a final updated/unchanged/failed/deferred summary. Progress is saved every 500 completed watches, so a restart resumes from persisted status hashes instead of losing the whole run. After repeated connection failures the batch pauses, leaves unfinished watches for the next retry, and keeps the Web UI responsive. A connection-level Electrs outage is shown once at service level; it is not persisted as a separate raw TCP error on every watch.
+
 Transaction history is paginated at 100 transactions per page. Within each transaction card, address lists longer than 10 rows are collapsed to the first 10 and can be expanded on demand; text exports still include the complete list.
 
 Removing a saved watch requires a second, named Yes/No confirmation so an accidental click cannot immediately delete it.
