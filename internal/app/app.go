@@ -115,7 +115,13 @@ type state struct {
 }
 
 const defaultDiscoveryGap = 20
-const maxBulkAddresses = 10000
+const recommendedWatchScripts = 500
+const warningWatchScripts = 1000
+const maxWatchScripts = 2000
+const maxSourceWatchScripts = 1000
+const maxDiscoveryGap = 500
+const maxBulkAddresses = 2000
+const maxCombinedAddresses = 10000
 const maxWatchFormBytes = 2 << 20
 const defaultTheme = "bitcoin-night"
 const currentEventDetailsVersion = 3
@@ -135,9 +141,25 @@ func selectedTheme(value string) string {
 	return defaultTheme
 }
 
+func capacityLevel(count int) string {
+	switch {
+	case count > maxWatchScripts:
+		return "over"
+	case count > warningWatchScripts:
+		return "high"
+	case count > recommendedWatchScripts:
+		return "warning"
+	default:
+		return "normal"
+	}
+}
+
 func discoveryGap(value int) int {
 	if value < 1 {
 		return defaultDiscoveryGap
+	}
+	if value > maxDiscoveryGap {
+		return maxDiscoveryGap
 	}
 	return value
 }
@@ -168,6 +190,7 @@ type groupView struct {
 	ScriptTypeKey          string
 	CanEditScriptType      bool
 	CanEditDerivationCount bool
+	MinimumDerivationCount int
 	AddressTypeName        string
 	AddressTypeCode        string
 	AddressTypeURL         string
@@ -229,6 +252,11 @@ type pageData struct {
 	CSPNonce           string
 	ElectrsUnavailable bool
 	RefreshMessage     string
+	WatchScripts       int
+	RecommendedScripts int
+	WarningScripts     int
+	MaxWatchScripts    int
+	CapacityLevel      string
 }
 
 type addressLookupResponse struct {
@@ -304,6 +332,10 @@ type nostrIdentityView struct {
 
 type App struct {
 	mu                 sync.RWMutex
+	pollMu             sync.Mutex
+	pollCancel         context.CancelFunc
+	pollGeneration     uint64
+	refreshNow         chan struct{}
 	state              state
 	path               string
 	client             *electrum.Client
@@ -322,6 +354,42 @@ type App struct {
 	refreshStarted     time.Time
 }
 
+func (a *App) startPollContext() (context.Context, func()) {
+	a.pollMu.Lock()
+	a.pollGeneration++
+	generation := a.pollGeneration
+	ctx, cancel := context.WithCancel(context.Background())
+	a.pollCancel = cancel
+	a.pollMu.Unlock()
+	return ctx, func() {
+		cancel()
+		a.pollMu.Lock()
+		if a.pollGeneration == generation {
+			a.pollCancel = nil
+		}
+		a.pollMu.Unlock()
+	}
+}
+
+func (a *App) cancelActivePoll() {
+	a.pollMu.Lock()
+	if a.pollCancel != nil {
+		a.pollCancel()
+		a.pollCancel = nil
+	}
+	a.pollMu.Unlock()
+}
+
+func (a *App) requestRefresh() {
+	if a.refreshNow == nil {
+		return
+	}
+	select {
+	case a.refreshNow <- struct{}{}:
+	default:
+	}
+}
+
 type notificationBalance struct {
 	Confirmed   int64
 	Unconfirmed int64
@@ -336,7 +404,7 @@ func New(dataDir, electrumAddress string, interval time.Duration) (*App, error) 
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}, mempoolURLs: parseMempoolURLs(os.Getenv("SWATCHER_MEMPOOL_URLS"))}
+	a := &App{path: filepath.Join(dataDir, "state.json"), authPath: filepath.Join(dataDir, "auth.json"), client: &electrum.Client{Address: electrumAddress}, interval: interval, notifier: notify.Sender{Path: filepath.Join(dataDir, "notifications.json")}, mempoolURLs: parseMempoolURLs(os.Getenv("SWATCHER_MEMPOOL_URLS")), refreshNow: make(chan struct{}, 1)}
 	a.tmpl = template.Must(template.New("index").Funcs(template.FuncMap{"watchLabel": a.watchLabel}).Parse(indexHTML))
 	a.transactionsTmpl = template.Must(template.New("transactions").Parse(transactionsHTML))
 	if err := a.load(); err != nil {
@@ -483,7 +551,8 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
 		sortMode = "activity"
 	}
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, MempoolURLs: a.mempoolURLs, CSPNonce: cspNonce(r), ElectrsUnavailable: a.electrsUnavailable, RefreshMessage: a.refreshMessageLocked()}
+	watchScripts := len(a.state.Watches)
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, MempoolURLs: a.mempoolURLs, CSPNonce: cspNonce(r), ElectrsUnavailable: a.electrsUnavailable, RefreshMessage: a.refreshMessageLocked(), WatchScripts: watchScripts, RecommendedScripts: recommendedWatchScripts, WarningScripts: warningWatchScripts, MaxWatchScripts: maxWatchScripts, CapacityLevel: capacityLevel(watchScripts)}
 	suggestions := map[string]bool{}
 	for _, group := range a.state.Groups {
 		if watchMetadataPattern.MatchString(group.Category) {
@@ -1013,6 +1082,14 @@ func (a *App) addWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !bulk && len(newWatches) > maxSourceWatchScripts {
+		writeFormError(w, r, http.StatusUnprocessableEntity, fmt.Sprintf("One xpub or descriptor may contain at most %d derived addresses. Use a smaller derivation range.", maxSourceWatchScripts))
+		return
+	}
+	if len(a.state.Watches)+len(newWatches) > maxWatchScripts {
+		writeFormError(w, r, http.StatusUnprocessableEntity, fmt.Sprintf("This would raise s/watcher to %d watched addresses. The safety limit is %d total; remove or reduce existing coverage first.", len(a.state.Watches)+len(newWatches), maxWatchScripts))
+		return
+	}
 	a.state.Watches = append(a.state.Watches, newWatches...)
 	a.state.Groups = append(a.state.Groups, WatchGroup{ID: groupID, Label: label, Category: category, Notes: notes, Source: source, ScriptType: scriptType, Count: count, IncludeChange: includeChange, CreatedAt: time.Now().UTC(), Bulk: bulk})
 	if err := a.saveLocked(); err != nil {
@@ -1115,6 +1192,33 @@ func validScriptType(value string) bool {
 	return value == "legacy" || value == "nested-segwit" || value == "native-segwit" || value == "taproot"
 }
 
+func groupWatchCount(watches []Watch, groupID string) int {
+	count := 0
+	for _, watch := range watches {
+		if watch.GroupID == groupID {
+			count++
+		}
+	}
+	return count
+}
+
+func minimumSafeDerivationCount(watches []Watch, groupID string, gap int) int {
+	minimum := gap
+	highestUsed := -1
+	for _, watch := range watches {
+		if watch.GroupID != groupID || (watch.Confirmed == 0 && watch.Unconfirmed == 0 && len(watch.KnownTx) == 0 && watch.LastTxID == "") {
+			continue
+		}
+		if index, ok := derivedPathIndex(watch.Path); ok && index > highestUsed {
+			highestUsed = index
+		}
+	}
+	if highestUsed+1+gap > minimum {
+		minimum = highestUsed + 1 + gap
+	}
+	return minimum
+}
+
 func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	label := normalizeWatchMetadata(r.FormValue("label"))
@@ -1190,11 +1294,19 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		requestedCount = int(parsed)
-		if requestedCount < currentCount {
-			writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("The watched address count can only increase; it is currently %d per branch.", currentCount))
+	}
+	minimumCount := minimumSafeDerivationCount(a.state.Watches, id, discoveryGap(a.state.DiscoveryGap))
+	if requestedCount < currentCount {
+		if requestedCount < minimumCount {
+			writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("Keep at least %d indexes per branch so every address with known activity plus the discovery gap remains watched.", minimumCount))
+			return
+		}
+		if r.FormValue("confirm_reduce") != "on" {
+			writeFormError(w, r, http.StatusConflict, fmt.Sprintf("Confirm reducing this watch from %d to %d indexes per branch. Removed trailing addresses will no longer receive activity notifications.", currentCount, requestedCount))
 			return
 		}
 	}
+	currentGroupScripts := groupWatchCount(a.state.Watches, id)
 	requestedType := strings.TrimSpace(r.FormValue("script_type"))
 	typeChanged := false
 	var replacement []Watch
@@ -1278,6 +1390,44 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 			current[key] = true
 		}
 	}
+	var retained map[string]bool
+	if canEditDerivationCount && !typeChanged && requestedCount < currentCount {
+		derived, err := bitcoin.DeriveAddresses(group.Source, group.ScriptType, requestedCount, group.IncludeChange)
+		if err != nil {
+			writeFormError(w, r, http.StatusBadRequest, err.Error()+".")
+			return
+		}
+		retained = make(map[string]bool, len(derived))
+		for _, child := range derived {
+			scriptHash, hashErr := bitcoin.ScriptHash(child.Address)
+			if hashErr != nil {
+				writeFormError(w, r, http.StatusBadRequest, hashErr.Error()+".")
+				return
+			}
+			retained[watchIdentityKey(Watch{Address: child.Address, ScriptHash: scriptHash})] = true
+		}
+	}
+	nextGroupScripts := currentGroupScripts
+	nextTotalScripts := len(a.state.Watches)
+	switch {
+	case typeChanged:
+		nextGroupScripts = len(replacement)
+		nextTotalScripts = len(a.state.Watches) - currentGroupScripts + nextGroupScripts
+	case requestedCount > currentCount:
+		nextGroupScripts += len(additions)
+		nextTotalScripts += len(additions)
+	case requestedCount < currentCount:
+		nextGroupScripts = len(retained)
+		nextTotalScripts = len(a.state.Watches) - currentGroupScripts + nextGroupScripts
+	}
+	if nextGroupScripts > maxSourceWatchScripts && nextGroupScripts > currentGroupScripts {
+		writeFormError(w, r, http.StatusUnprocessableEntity, fmt.Sprintf("One xpub or descriptor may watch at most %d addresses; this change would watch %d.", maxSourceWatchScripts, nextGroupScripts))
+		return
+	}
+	if nextTotalScripts > maxWatchScripts && nextTotalScripts > len(a.state.Watches) {
+		writeFormError(w, r, http.StatusUnprocessableEntity, fmt.Sprintf("This change would raise s/watcher to %d watched addresses. The safety limit is %d total.", nextTotalScripts, maxWatchScripts))
+		return
+	}
 	group.Label = label
 	group.Category = category
 	if noteProvided {
@@ -1308,6 +1458,16 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 		group.Count = requestedCount
 		group.DiscoveryError = ""
 		a.state.Watches = append(a.state.Watches, additions...)
+	} else if requestedCount < currentCount {
+		group.Count = requestedCount
+		group.DiscoveryError = ""
+		keptWatches := a.state.Watches[:0]
+		for _, watch := range a.state.Watches {
+			if watch.GroupID != id || retained[watchIdentityKey(watch)] {
+				keptWatches = append(keptWatches, watch)
+			}
+		}
+		a.state.Watches = keptWatches
 	}
 	for i := range a.state.Watches {
 		if a.state.Watches[i].GroupID == id {
@@ -1320,6 +1480,11 @@ func (a *App) updateGroup(w http.ResponseWriter, r *http.Request) {
 	if err := a.saveLocked(); err != nil {
 		writeFormError(w, r, http.StatusInternalServerError, "The watch settings could not be saved.")
 		return
+	}
+	if typeChanged || requestedCount < currentCount {
+		a.cancelActivePoll()
+		a.client.ResetSubscriptions()
+		a.requestRefresh()
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -1385,7 +1550,15 @@ func (a *App) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.state.Groups = keptGroups
-	_ = a.saveLocked()
+	if err := a.saveLocked(); err != nil {
+		writeFormError(w, r, http.StatusInternalServerError, "The watch could not be removed.")
+		return
+	}
+	if len(removedWatchIDs) > 0 {
+		a.cancelActivePoll()
+		a.client.ResetSubscriptions()
+		a.requestRefresh()
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -1457,8 +1630,8 @@ func (a *App) combineGroups(w http.ResponseWriter, r *http.Request) {
 		writeFormError(w, r, http.StatusBadRequest, "The selected watches do not contain enough addresses to combine.")
 		return
 	}
-	if rawAddressCount > maxBulkAddresses {
-		writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("A combined watch may contain at most %d addresses.", maxBulkAddresses))
+	if rawAddressCount > maxCombinedAddresses {
+		writeFormError(w, r, http.StatusBadRequest, fmt.Sprintf("A combined watch may contain at most %d addresses.", maxCombinedAddresses))
 		return
 	}
 	if hasMultiple && r.FormValue("confirm_multi") != "on" {
@@ -1753,6 +1926,8 @@ func (a *App) pollLoop() {
 		select {
 		case <-ticker.C:
 			a.pollTick()
+		case <-a.refreshNow:
+			a.pollTick()
 		case <-changes:
 			scriptHashes := a.client.TakeChanges()
 			if len(scriptHashes) != 0 {
@@ -1802,18 +1977,41 @@ type pollResult struct {
 }
 
 const (
-	largeRefreshThreshold     = 1_000
-	largeRefreshPace          = 20 * time.Millisecond
+	largeRefreshThreshold     = 100
+	largeRefreshPace          = 200 * time.Millisecond
+	largeRefreshWorkers       = 2
 	refreshCheckpointSize     = 500
 	maxConsecutiveUnavailable = 8
 	snapshotTimeout           = 30 * time.Second
 	refreshHeartbeat          = 30 * time.Second
 )
 
+func prioritizeRefreshWatches(watches []Watch) {
+	priority := func(watch Watch) int {
+		switch {
+		case watch.Unconfirmed != 0:
+			return 5
+		case watch.Confirmed != 0:
+			return 4
+		case len(watch.KnownTx) != 0 || watch.LastTxID != "":
+			return 3
+		case !watch.Initialized:
+			return 2
+		default:
+			return 1
+		}
+	}
+	sort.SliceStable(watches, func(i, j int) bool {
+		return priority(watches[i]) > priority(watches[j])
+	})
+}
+
 // poll refreshes every watch when scriptHashes is nil. Subscription wake-ups
 // pass only the changed script hashes so one active address cannot cause a
 // full-wallet scan.
 func (a *App) poll(scriptHashes []string) {
+	pollCtx, finishPoll := a.startPollContext()
+	defer finishPoll()
 	a.mu.RLock()
 	allWatches := append([]Watch(nil), a.state.Watches...)
 	eventVersions := eventDetailVersions(a.state.Events)
@@ -1826,6 +2024,7 @@ func (a *App) poll(scriptHashes []string) {
 	a.beginRefresh(len(watches))
 	largeRefresh := len(watches) > largeRefreshThreshold
 	if largeRefresh {
+		prioritizeRefreshWatches(watches)
 		log.Printf("electrum refresh started: %d watched scripts, paced at up to %d per second", len(watches), int(time.Second/largeRefreshPace))
 	}
 
@@ -1866,6 +2065,9 @@ func (a *App) poll(scriptHashes []string) {
 		groupInitialized[groupID] = groupInitialized[groupID] || watch.Initialized
 	}
 	workerCount := 8
+	if largeRefresh {
+		workerCount = largeRefreshWorkers
+	}
 	if len(watches) < workerCount {
 		workerCount = len(watches)
 	}
@@ -1877,7 +2079,7 @@ func (a *App) poll(scriptHashes []string) {
 		go func() {
 			defer workers.Done()
 			for watch := range jobs {
-				results <- a.fetchWatch(watch, groupScripts, eventVersions, groupKnown, groupInitialized)
+				results <- a.fetchWatch(pollCtx, watch, groupScripts, eventVersions, groupKnown, groupInitialized)
 			}
 		}()
 	}
@@ -1893,12 +2095,16 @@ func (a *App) poll(scriptHashes []string) {
 		for index, watch := range watches {
 			if pace != nil && index != 0 {
 				select {
+				case <-pollCtx.Done():
+					return
 				case <-stopDispatch:
 					return
 				case <-pace.C:
 				}
 			}
 			select {
+			case <-pollCtx.Done():
+				return
 			case <-stopDispatch:
 				return
 			case jobs <- watch:
@@ -1939,6 +2145,9 @@ func (a *App) poll(scriptHashes []string) {
 		completed++
 		checkpoint = append(checkpoint, result)
 		switch {
+		case errors.Is(result.err, context.Canceled):
+			unavailable++
+			consecutiveUnavailable = 0
 		case result.err != nil && electrum.IsUnavailable(result.err):
 			unavailable++
 			consecutiveUnavailable++
@@ -1968,10 +2177,10 @@ func (a *App) poll(scriptHashes []string) {
 		}
 	}
 	unattempted := len(watches) - completed
-	a.applyPollResults(checkpoint, groupScriptAddresses, unattempted == 0)
+	a.applyPollResults(checkpoint, groupScriptAddresses, unattempted == 0 && pollCtx.Err() == nil)
 	deferred := unavailable + unattempted
 
-	if unavailable != 0 {
+	if unavailable != 0 && pollCtx.Err() == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		err := a.client.Ping(ctx)
 		cancel()
@@ -2000,6 +2209,9 @@ func (a *App) applyPollResults(pollResults []pollResult, groupScriptAddresses ma
 		current := &a.state.Watches[i]
 		current.LastChecked = result.checkedAt
 		if result.err != nil {
+			if errors.Is(result.err, context.Canceled) {
+				continue
+			}
 			if electrum.IsUnavailable(result.err) {
 				current.LastError = ""
 				continue
@@ -2146,7 +2358,7 @@ func addressAmountsComplete(addresses []string, amounts map[string]uint64) bool 
 	return true
 }
 
-func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVersions map[string]int, groupKnown map[string]map[string]bool, groupInitialized map[string]bool) pollResult {
+func (a *App) fetchWatch(pollCtx context.Context, watch Watch, groupScripts map[string][][]byte, eventVersions map[string]int, groupKnown map[string]map[string]bool, groupInitialized map[string]bool) pollResult {
 	groupID := watch.GroupID
 	if groupID == "" {
 		groupID = watch.ID
@@ -2156,7 +2368,7 @@ func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVer
 	if watchNeedsEventDetails(watch, eventVersions) {
 		knownStatus = nil
 	}
-	snapshotCtx, snapshotCancel := context.WithTimeout(context.Background(), snapshotTimeout)
+	snapshotCtx, snapshotCancel := context.WithTimeout(pollCtx, snapshotTimeout)
 	var available bool
 	result.snapshot, available, result.err = a.client.SnapshotSince(snapshotCtx, watch.ScriptHash, knownStatus)
 	snapshotCancel()
@@ -2167,7 +2379,7 @@ func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVer
 		result.unchanged = true
 		return result
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(pollCtx, 5*time.Minute)
 	defer cancel()
 	if latest, ok := latestHistory(result.snapshot.History); ok {
 		result.lastTxID, result.lastTxHeight = latest.TxHash, latest.Height
@@ -2383,6 +2595,11 @@ func (a *App) expandDiscoveryLocked() error {
 			group.DiscoveryError = err.Error()
 			continue
 		}
+		if len(derived) > maxSourceWatchScripts {
+			group.DiscoveryError = fmt.Sprintf("smart discovery paused: this wallet would exceed the %d-address per-wallet safety limit", maxSourceWatchScripts)
+			continue
+		}
+		additions := make([]Watch, 0, len(derived))
 		for _, child := range derived {
 			scriptHash, err := bitcoin.ScriptHash(child.Address)
 			if err != nil {
@@ -2396,12 +2613,20 @@ func (a *App) expandDiscoveryLocked() error {
 				}
 				continue
 			}
-			a.state.Watches = append(a.state.Watches, Watch{ID: randomID(), GroupID: group.ID, Label: group.Label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
-			addressOwners[watchIdentityKey(candidate)] = group.ID
+			additions = append(additions, Watch{ID: randomID(), GroupID: group.ID, Label: group.Label + " " + child.Path, Address: child.Address, Path: child.Path, ScriptHash: scriptHash})
 		}
-		if group.DiscoveryError == "" {
-			group.Count = desired
+		if group.DiscoveryError != "" {
+			continue
 		}
+		if len(a.state.Watches)+len(additions) > maxWatchScripts {
+			group.DiscoveryError = fmt.Sprintf("smart discovery paused: adding %d addresses would exceed the %d-address service safety limit", len(additions), maxWatchScripts)
+			continue
+		}
+		for _, watch := range additions {
+			a.state.Watches = append(a.state.Watches, watch)
+			addressOwners[watchIdentityKey(watch)] = group.ID
+		}
+		group.Count = desired
 	}
 	return nil
 }
@@ -2894,7 +3119,14 @@ func (a *App) groupViewsLocked() []groupView {
 		if group.Bulk || group.Combined {
 			typeName, typeCode, typeURL = "", "", ""
 		}
-		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), CanEditDerivationCount: canEditDerivationCount, AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
+		minimumCount := 0
+		if canEditDerivationCount {
+			minimumCount = minimumSafeDerivationCount(a.state.Watches, group.ID, discoveryGap(a.state.DiscoveryGap))
+			if group.Count > 0 && minimumCount > group.Count {
+				minimumCount = group.Count
+			}
+		}
+		views = append(views, groupView{WatchGroup: group, LastError: group.DiscoveryError, ScriptTypeKey: scriptTypeKey, CanEditScriptType: isBareXpub(group.Source), CanEditDerivationCount: canEditDerivationCount, MinimumDerivationCount: minimumCount, AddressTypeName: typeName, AddressTypeCode: typeCode, AddressTypeURL: typeURL})
 	}
 	for _, watch := range a.state.Watches {
 		groupID := watch.GroupID
@@ -3055,6 +3287,9 @@ func SetPrivacyMode(dataDir string, enabled bool, password string) error {
 func SetDiscoveryGap(dataDir string, gap int) error {
 	if gap < 1 {
 		return errors.New("discovery gap must be positive")
+	}
+	if gap > maxDiscoveryGap {
+		return fmt.Errorf("discovery gap may not exceed %d indexes per branch", maxDiscoveryGap)
 	}
 	path := filepath.Join(dataDir, "state.json")
 	var current state

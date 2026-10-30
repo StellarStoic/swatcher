@@ -127,7 +127,11 @@ Nothing is seeded at install and no credential is generated. **A new installatio
 
 From there the whole flow is inside the Web UI: add a watch, and the first Electrs scan establishes the baseline. That first scan deliberately imports existing history **without** sending notifications for it — otherwise a wallet with years of transactions would deliver years of alerts on the day it was added.
 
-The baseline stores Electrum's status hash for each watched script. Later subscription notifications refresh only the script hashes that actually changed. The 30-second recovery check selects only new, failed, dirty, or disconnected watches; it does not scan healthy unchanged watches. After a service restart, s/watcher resubscribes and compares the persisted status first, so an unchanged large wallet does not reread every address history and balance. Refreshes larger than 1,000 scripts are paced at no more than 50 scripts per second to avoid overwhelming Electrs during a first baseline or reconnection.
+The baseline stores Electrum's status hash for each watched script. Later subscription notifications refresh only the script hashes that actually changed. The 30-second recovery check selects only new, failed, dirty, or disconnected watches; it does not scan healthy unchanged watches. After a service restart, s/watcher resubscribes and compares the persisted status first, so an unchanged wallet does not reread every address history and balance.
+
+For everyday use, keep the service at **500 watched addresses or fewer**. s/watcher warns above 500, shows a stronger warning above 1,000, permits at most 1,000 addresses from one extended key or descriptor, and enforces a hard service limit of 2,000. Existing installations above those limits are preserved, but cannot add or expand coverage until they are reduced. Edit an extended-key or descriptor watch to lower its indexes per branch; s/watcher protects every known active index plus the configured discovery gap. Removing coverage also reconnects Electrs so obsolete subscriptions are released immediately.
+
+Refreshes larger than 100 scripts are deliberately limited to two workers and paced at no more than 5 scripts per second. Funded, historically used, and newly added scripts are registered first. Once registered, Electrum subscription events still trigger the targeted script refresh immediately, so the load protection does not add a delay to normal transaction notifications.
 
 While a large refresh is running, the dashboard shows completed and total address counts and the service log reports progress, a 30-second heartbeat while Electrs is slow, and a final updated/unchanged/failed/deferred summary. Progress is saved every 500 completed watches, so a restart resumes from persisted status hashes instead of losing the whole run. After repeated connection failures the batch pauses, leaves unfinished watches for the next retry, and keeps the Web UI responsive. A connection-level Electrs outage is shown once at service level; it is not persisted as a separate raw TCP error on every watch.
 
@@ -182,7 +186,7 @@ Masking is a Web UI behavior only. Notification messages still carry full amount
 
 - **When to run it:** when an extended key or ranged descriptor is missing addresses — a wallet that skipped indexes needs a larger gap than the default.
 - **What it changes:** the discovery gap in `state.json`. **Lowering it never deletes addresses already derived**; it only stops new derivation beyond the new limit.
-- **Cost:** a few seconds and a restart. Every extra index adds one Electrum subscription, increases the first baseline scan, and increases memory and backup size. Unchanged indexes do not cause repeated history and balance reads, but unusually large values should still be increased deliberately.
+- **Cost:** a few seconds and a restart. Every extra index adds one Electrum subscription, increases the first baseline scan, and increases memory and backup size. The default gap is 20 and the maximum is 500 indexes per branch. Unchanged indexes do not cause repeated history and balance reads, but large values should still be increased deliberately and kept within the dashboard's capacity guidance.
 - **Repeat safety:** idempotent. Newly derived historical addresses are baselined without firing notifications, the same as a new watch.
 - **Outputs:** none.
 
@@ -225,7 +229,7 @@ Nothing needs rebuilding on restore, but Electrs does need to be present and syn
 1. **Bitcoin mainnet only.** Testnet, signet, and regtest are not supported.
 2. **Watch-only, by design.** No transaction construction, signing, or spending, and no private key, WIF, extended private key, or seed phrase is ever accepted.
 3. **Hardened derivation below an extended key is impossible** and is rejected. Descriptors need a public extended key and a non-hardened wildcard path.
-4. **Address discovery is operator-controlled.** There is no application-level address cap. The global gap and each extended-key or ranged-descriptor watch can be increased, but large values increase the initial Electrs baseline and subscription count, scan time, memory use, and backup size.
+4. **Address discovery is operator-controlled within resource safeguards.** The global gap and each extended-key or ranged-descriptor watch can be adjusted. Coverage is capped at 1,000 addresses per source and 2,000 total because large subscription sets can saturate Electrs on lower-power servers; 500 or fewer is recommended for everyday use.
 5. **Runes and Ordinals are detected only.** No content is decoded, rendered, fetched, or linked.
 6. **Input addresses are not sender identity.** They identify the outputs a transaction consumed, which is transaction-level evidence and nothing more.
 7. **Telegram, and Nostr over clearnet relays, disclose notification traffic** to that provider or relay. Electrs queries stay local either way.

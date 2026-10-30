@@ -56,6 +56,38 @@ func TestSnapshotTimeoutIsServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestResetSubscriptionsReconnectsWithoutRemovedScripts(t *testing.T) {
+	server := newTestElectrumServer(t)
+	client := &Client{Address: server.address()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if _, err := client.Snapshot(ctx, "removed-script"); err != nil {
+		t.Fatal(err)
+	}
+	client.ResetSubscriptions()
+
+	client.mu.Lock()
+	session := client.session
+	client.mu.Unlock()
+	if session != nil {
+		t.Fatal("reset retained the old Electrum session")
+	}
+	client.subscriptionsMu.Lock()
+	_, retained := client.subscriptions["removed-script"]
+	client.subscriptionsMu.Unlock()
+	if retained {
+		t.Fatal("reset retained the removed script subscription")
+	}
+
+	if _, err := client.Snapshot(ctx, "remaining-script"); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.methodCount("blockchain.scripthash.subscribe"); got != 2 {
+		t.Fatalf("subscribe calls = %d, want 2 across the reconnect", got)
+	}
+}
+
 func TestAddInputEffectResolvesExternalSourceAddress(t *testing.T) {
 	const sourceAddress = "bc1qnk4zh9qcnap2mycp56qjrgza3cc8ylrh8fecp0"
 	script, err := bitcoin.ScriptPubKey(sourceAddress)

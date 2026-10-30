@@ -528,6 +528,72 @@ func TestClearTransientWatchErrors(t *testing.T) {
 	}
 }
 
+func TestAddWatchRejectsServiceCapacityOverflow(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < maxWatchScripts; index++ {
+		a.state.Watches = append(a.state.Watches, Watch{ID: fmt.Sprintf("existing-%d", index), GroupID: "existing", Address: fmt.Sprintf("existing-%d", index), ScriptHash: fmt.Sprintf("hash-%d", index)})
+	}
+	form := url.Values{"label": {"donations"}, "category": {"public"}, "source": {"1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"}}
+	request := httptest.NewRequest(http.MethodPost, "/watches", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+
+	a.addWatch(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity || len(a.state.Watches) != maxWatchScripts || !strings.Contains(response.Body.String(), "safety limit is 2000 total") {
+		t.Fatalf("capacity overflow response: status=%d watches=%d body=%s", response.Code, len(a.state.Watches), response.Body.String())
+	}
+}
+
+func TestPrioritizeRefreshWatchesHandlesFundsFirst(t *testing.T) {
+	watches := []Watch{
+		{ID: "new"},
+		{ID: "initialized", Initialized: true},
+		{ID: "history", KnownTx: []string{"tx"}},
+		{ID: "funded", Confirmed: 1},
+		{ID: "mempool", Unconfirmed: 1},
+	}
+	prioritizeRefreshWatches(watches)
+	got := make([]string, len(watches))
+	for index, watch := range watches {
+		got[index] = watch.ID
+	}
+	want := []string{"mempool", "funded", "history", "new", "initialized"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("refresh order = %v, want %v", got, want)
+	}
+}
+
+func TestCapacityLevel(t *testing.T) {
+	tests := map[int]string{
+		recommendedWatchScripts:     "normal",
+		recommendedWatchScripts + 1: "warning",
+		warningWatchScripts + 1:     "high",
+		maxWatchScripts + 1:         "over",
+	}
+	for count, want := range tests {
+		if got := capacityLevel(count); got != want {
+			t.Fatalf("capacityLevel(%d) = %q, want %q", count, got, want)
+		}
+	}
+}
+
+func TestCancelActivePollCancelsCurrentGeneration(t *testing.T) {
+	a := &App{}
+	ctx, finish := a.startPollContext()
+	defer finish()
+	a.cancelActivePoll()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("active refresh context was not cancelled")
+	}
+}
+
 func TestPollReportsElectrsOutageAtServiceLevel(t *testing.T) {
 	const address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
 	scriptHash, err := bitcoin.ScriptHash(address)
@@ -810,8 +876,11 @@ func TestSetDiscoveryGapPersistsValidatedValue(t *testing.T) {
 	if saved.DiscoveryGap != 37 {
 		t.Fatalf("saved discovery gap %d, want 37", saved.DiscoveryGap)
 	}
-	if err := SetDiscoveryGap(dataDir, 5_001); err != nil {
-		t.Fatalf("discovery gap remains artificially capped: %v", err)
+	if err := SetDiscoveryGap(dataDir, maxDiscoveryGap); err != nil {
+		t.Fatalf("maximum discovery gap was rejected: %v", err)
+	}
+	if err := SetDiscoveryGap(dataDir, maxDiscoveryGap+1); err == nil {
+		t.Fatal("accepted a discovery gap above the per-wallet safety limit")
 	}
 }
 
@@ -984,7 +1053,7 @@ func TestAddExtendedKeyGroupAndRender(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(body, "test wallet_1") || !strings.Contains(body, "cold storage") || !strings.Contains(body, "Long-term savings; verify annually.") || !strings.Contains(body, "theme-bitcoin-night") || !strings.Contains(body, "monitoring with notifications") || !strings.Contains(body, "njump.me/npub1qqqqqqz7") || !strings.Contains(body, "Sort by") || !strings.Contains(body, ">Edit<") || !strings.Contains(body, "[hidden]{display:none!important}") || !strings.Contains(body, "focus-watches") || !strings.Contains(body, "block:'center'") || !strings.Contains(body, "function tagColorKey") || !strings.Contains(body, "normalize('NFKC')") || !strings.Contains(body, "toLowerCase()") || !strings.Contains(body, "72% 78%") || !strings.Contains(body, "classList.add('metadata-tag')") || !strings.Contains(body, "smart gap 20") || !strings.Contains(body, "notify_minimum") || !strings.Contains(body, "3 confirmations") || !strings.Contains(body, "new URLSearchParams(new FormData(addForm))") {
 		t.Fatalf("render status %d: %s", response.Code, response.Body.String())
 	}
-	for _, expected := range []string{"watch-focus-pulse 5s", "prefers-reduced-motion:reduce", "function focusWatchRow", "classList.add('watch-focus')", "},5000)", "focusWatchRow(document.getElementById('view-'+addedWatch)"} {
+	for _, expected := range []string{"watch-focus-pulse 5s", "prefers-reduced-motion:reduce", "function focusWatchRow", "classList.add('watch-focus')", "},5000)", "focusWatchRow(document.getElementById('view-'+addedWatch)", `id="watch-capacity"`, "80 / 2000 watched addresses", "Recommended for everyday use: 500 or fewer", "Watched indexes per branch"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("watch focus feedback is missing %q", expected)
 		}
@@ -1580,8 +1649,28 @@ func TestUpdateDescriptorIncreasesCoverageWithoutLosingHistory(t *testing.T) {
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response = httptest.NewRecorder()
 	a.updateGroup(response, request)
-	if response.Code != http.StatusBadRequest || len(a.state.Watches) != 25 || !strings.Contains(response.Body.String(), "can only increase") {
-		t.Fatalf("descriptor coverage decrease was not rejected safely: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
+	if response.Code != http.StatusBadRequest || len(a.state.Watches) != 25 || !strings.Contains(response.Body.String(), "at least 21 indexes") {
+		t.Fatalf("unsafe descriptor reduction was not rejected: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
+	}
+
+	edit.Set("derivation_count", "21")
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", groupID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusConflict || len(a.state.Watches) != 25 || !strings.Contains(response.Body.String(), "Confirm reducing") {
+		t.Fatalf("unconfirmed descriptor reduction was accepted: status=%d body=%s watches=%d", response.Code, response.Body.String(), len(a.state.Watches))
+	}
+
+	edit.Set("confirm_reduce", "on")
+	request = httptest.NewRequest(http.MethodPost, "/groups/ignored/update", strings.NewReader(edit.Encode()))
+	request.SetPathValue("id", groupID)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	a.updateGroup(response, request)
+	if response.Code != http.StatusSeeOther || a.state.Groups[0].Count != 21 || len(a.state.Watches) != 21 || len(a.state.Events) != 1 {
+		t.Fatalf("confirmed safe reduction failed: status=%d body=%s watches=%d events=%d", response.Code, response.Body.String(), len(a.state.Watches), len(a.state.Events))
 	}
 }
 
