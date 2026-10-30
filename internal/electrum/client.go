@@ -99,6 +99,18 @@ type rpcError struct {
 	message string
 }
 
+var errUnavailable = errors.New("electrs unavailable")
+
+// IsUnavailable reports connection-level failures that affect the whole
+// Electrs service rather than one watched script.
+func IsUnavailable(err error) bool {
+	return errors.Is(err, errUnavailable)
+}
+
+func unavailable(err error) error {
+	return fmt.Errorf("%w: %v", errUnavailable, err)
+}
+
 func (e rpcError) Error() string {
 	return fmt.Sprintf("electrum error %d: %s", e.code, e.message)
 }
@@ -141,6 +153,11 @@ func (c *Client) SnapshotSince(ctx context.Context, scriptHash string, knownStat
 			return Snapshot{}, false, err
 		}
 		if err := c.ensureSubscribed(ctx, s, scriptHash, sub); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				timeoutErr := unavailable(fmt.Errorf("Electrs subscription timed out: %w", err))
+				c.invalidate(s, timeoutErr)
+				return Snapshot{}, false, timeoutErr
+			}
 			lastErr = err
 			if !retryable(err) {
 				return Snapshot{}, false, err
@@ -168,6 +185,11 @@ func (c *Client) SnapshotSince(ctx context.Context, scriptHash string, knownStat
 
 		var history []HistoryItem
 		if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.get_history", []any{scriptHash}, &history); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				timeoutErr := unavailable(fmt.Errorf("Electrs history request timed out: %w", err))
+				c.invalidate(s, timeoutErr)
+				return Snapshot{}, false, timeoutErr
+			}
 			lastErr = err
 			if !retryable(err) {
 				return Snapshot{}, false, err
@@ -177,6 +199,11 @@ func (c *Client) SnapshotSince(ctx context.Context, scriptHash string, knownStat
 		}
 		var balance Balance
 		if err := s.call(ctx, c.nextID.Add(1), "blockchain.scripthash.get_balance", []any{scriptHash}, &balance); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				timeoutErr := unavailable(fmt.Errorf("Electrs balance request timed out: %w", err))
+				c.invalidate(s, timeoutErr)
+				return Snapshot{}, false, timeoutErr
+			}
 			lastErr = err
 			if !retryable(err) {
 				return Snapshot{}, false, err
@@ -393,7 +420,7 @@ func (c *Client) getSession(ctx context.Context) (*session, error) {
 	dialer := net.Dialer{Timeout: 5 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", c.Address)
 	if err != nil {
-		return nil, fmt.Errorf("connect to electrs: %w", err)
+		return nil, unavailable(fmt.Errorf("connect to electrs: %w", err))
 	}
 	s := &session{
 		conn:     conn,
@@ -511,7 +538,7 @@ func (s *session) call(ctx context.Context, id uint64, method string, params []a
 	s.pendingMu.Lock()
 	if s.closed() {
 		s.pendingMu.Unlock()
-		return errors.New("electrum connection is closed")
+		return unavailable(errors.New("electrum connection is closed"))
 	}
 	s.pending[id] = result
 	s.pendingMu.Unlock()
@@ -528,8 +555,9 @@ func (s *session) call(ctx context.Context, id uint64, method string, params []a
 	s.writeMu.Unlock()
 	if err != nil {
 		s.removePending(id)
-		s.close(fmt.Errorf("write electrum request: %w", err))
-		return fmt.Errorf("write electrum request: %w", err)
+		connectionErr := unavailable(fmt.Errorf("write electrum request: %w", err))
+		s.close(connectionErr)
+		return connectionErr
 	}
 
 	select {
@@ -546,7 +574,7 @@ func (s *session) call(ctx context.Context, id uint64, method string, params []a
 		return ctx.Err()
 	case <-s.done:
 		s.removePending(id)
-		return errors.New("electrum connection closed")
+		return unavailable(errors.New("electrum connection closed"))
 	}
 }
 
@@ -555,7 +583,7 @@ func (s *session) readLoop() {
 	for {
 		var message response
 		if err := decoder.Decode(&message); err != nil {
-			s.close(fmt.Errorf("read electrum response: %w", err))
+			s.close(unavailable(fmt.Errorf("read electrum response: %w", err)))
 			return
 		}
 		if message.ID == nil {
@@ -587,7 +615,7 @@ func (s *session) removePending(id uint64) {
 
 func (s *session) close(err error) {
 	if err == nil {
-		err = errors.New("electrum connection closed")
+		err = unavailable(errors.New("electrum connection closed"))
 	}
 	s.closeOnce.Do(func() {
 		_ = s.conn.Close()

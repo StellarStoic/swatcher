@@ -474,6 +474,141 @@ func TestWatchNeedsEventDetails(t *testing.T) {
 	}
 }
 
+func TestClearTransientWatchErrors(t *testing.T) {
+	watches := []Watch{
+		{ID: "dial", LastError: "connect to electrs: dial tcp 10.0.3.1:50001: connect: connection refused"},
+		{ID: "closed", LastError: "electrs unavailable: electrum connection closed"},
+		{ID: "rpc", LastError: "electrum error -1: invalid script hash"},
+		{ID: "healthy"},
+	}
+	if cleared := clearTransientWatchErrors(watches); cleared != 2 {
+		t.Fatalf("cleared %d errors, want 2", cleared)
+	}
+	if watches[0].LastError != "" || watches[1].LastError != "" {
+		t.Fatalf("transient errors remain: %#v", watches[:2])
+	}
+	if watches[2].LastError == "" {
+		t.Fatal("script-specific error was cleared")
+	}
+}
+
+func TestPollReportsElectrsOutageAtServiceLevel(t *testing.T) {
+	const address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+	scriptHash, err := bitcoin.ScriptHash(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Watches = []Watch{{ID: "watch", Label: "savings", Address: address, ScriptHash: scriptHash, Initialized: true, LastError: "connect to electrs: old refusal"}}
+
+	a.poll([]string{scriptHash})
+	if got := a.state.Watches[0].LastError; got != "" {
+		t.Fatalf("connection outage remained attached to watch: %q", got)
+	}
+	if !a.electrsUnavailable {
+		t.Fatal("connection outage was not reported at service level")
+	}
+	if a.refreshTotal != 0 || a.refreshCompleted != 0 {
+		t.Fatalf("refresh status remained active: %d/%d", a.refreshCompleted, a.refreshTotal)
+	}
+}
+
+func TestPollPausesBatchAfterRepeatedElectrsOutage(t *testing.T) {
+	const address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 100; index++ {
+		a.state.Watches = append(a.state.Watches, Watch{
+			ID:          fmt.Sprintf("watch-%d", index),
+			Label:       fmt.Sprintf("watch %d", index),
+			Address:     address,
+			ScriptHash:  fmt.Sprintf("hash-%d", index),
+			Initialized: true,
+		})
+	}
+
+	a.poll(nil)
+	attempted := 0
+	for _, watch := range a.state.Watches {
+		if !watch.LastChecked.IsZero() {
+			attempted++
+		}
+		if watch.LastError != "" {
+			t.Fatalf("connection error persisted on %s: %s", watch.ID, watch.LastError)
+		}
+	}
+	if attempted < maxConsecutiveUnavailable || attempted >= len(a.state.Watches) {
+		t.Fatalf("attempted %d watches, want an early pause after repeated outages", attempted)
+	}
+}
+
+func TestApplyPollResultsSavesCheckpoints(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make([]pollResult, 600)
+	for index := range results {
+		watch := Watch{ID: fmt.Sprintf("watch-%d", index), ScriptHash: fmt.Sprintf("hash-%d", index)}
+		a.state.Watches = append(a.state.Watches, watch)
+		results[index] = pollResult{watch: watch, groupID: watch.ID, snapshot: electrum.Snapshot{Status: fmt.Sprintf("status-%d", index)}, checkedAt: time.Now().UTC()}
+	}
+
+	a.applyPollResults(results[:500], nil, false)
+	assertPersistedStatuses(t, a.path, 500)
+	a.applyPollResults(results[500:], nil, true)
+	assertPersistedStatuses(t, a.path, 600)
+}
+
+func assertPersistedStatuses(t *testing.T, path string, want int) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved state
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	got := 0
+	for _, watch := range saved.Watches {
+		if watch.ElectrumStatus != nil {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("persisted %d Electrum statuses, want %d", got, want)
+	}
+}
+
+func TestIndexShowsElectrsRecoveryStatus(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.electrsUnavailable = true
+	a.refreshTotal = 12_183
+	a.refreshCompleted = 1_500
+
+	response := httptest.NewRecorder()
+	a.index(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	for _, expected := range []string{
+		"Electrs temporarily unavailable.",
+		"s/watcher will retry automatically.",
+		"Refreshing locally: 1500 of 12183 watched addresses checked.",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("recovery status is missing %q", expected)
+		}
+	}
+}
+
 func TestPrivacyModeMasksRenderedSensitiveValues(t *testing.T) {
 	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
 	if err != nil {

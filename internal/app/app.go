@@ -218,15 +218,17 @@ type transactionPageData struct {
 }
 
 type pageData struct {
-	Groups           []groupView
-	Events           []eventView
-	Nostr            *nostrIdentityView
-	PrivacyMode      bool
-	Theme            string
-	SortMode         string
-	GroupSuggestions []string
-	MempoolURLs      []string
-	CSPNonce         string
+	Groups             []groupView
+	Events             []eventView
+	Nostr              *nostrIdentityView
+	PrivacyMode        bool
+	Theme              string
+	SortMode           string
+	GroupSuggestions   []string
+	MempoolURLs        []string
+	CSPNonce           string
+	ElectrsUnavailable bool
+	RefreshMessage     string
 }
 
 type addressLookupResponse struct {
@@ -301,19 +303,23 @@ type nostrIdentityView struct {
 }
 
 type App struct {
-	mu               sync.RWMutex
-	state            state
-	path             string
-	client           *electrum.Client
-	interval         time.Duration
-	tmpl             *template.Template
-	transactionsTmpl *template.Template
-	notifier         notify.Sender
-	mempoolURLs      []string
-	authPath         string
-	authMu           sync.Mutex
-	failedLogins     int
-	loginLockedUntil time.Time
+	mu                 sync.RWMutex
+	state              state
+	path               string
+	client             *electrum.Client
+	interval           time.Duration
+	tmpl               *template.Template
+	transactionsTmpl   *template.Template
+	notifier           notify.Sender
+	mempoolURLs        []string
+	authPath           string
+	authMu             sync.Mutex
+	failedLogins       int
+	loginLockedUntil   time.Time
+	electrsUnavailable bool
+	refreshTotal       int
+	refreshCompleted   int
+	refreshStarted     time.Time
 }
 
 type notificationBalance struct {
@@ -477,7 +483,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	if sortMode != "balance" && sortMode != "name" && sortMode != "group" && sortMode != "date" && sortMode != "activity" && sortMode != "type" {
 		sortMode = "activity"
 	}
-	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, MempoolURLs: a.mempoolURLs, CSPNonce: cspNonce(r)}
+	data := pageData{Groups: a.groupViewsLocked(), PrivacyMode: a.state.PrivacyMode, Theme: selectedTheme(a.state.Theme), SortMode: sortMode, MempoolURLs: a.mempoolURLs, CSPNonce: cspNonce(r), ElectrsUnavailable: a.electrsUnavailable, RefreshMessage: a.refreshMessageLocked()}
 	suggestions := map[string]bool{}
 	for _, group := range a.state.Groups {
 		if watchMetadataPattern.MatchString(group.Category) {
@@ -1656,11 +1662,86 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	if err := a.client.Ping(ctx); err != nil {
+		a.setElectrsUnavailable(true)
 		http.Error(w, "Electrs is unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	a.setElectrsUnavailable(false)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (a *App) setElectrsUnavailable(unavailable bool) {
+	a.mu.Lock()
+	a.electrsUnavailable = unavailable
+	a.mu.Unlock()
+}
+
+func (a *App) refreshMessageLocked() string {
+	if a.refreshTotal == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Refreshing locally: %d of %d watched addresses checked. You can keep using s/watcher.", a.refreshCompleted, a.refreshTotal)
+}
+
+func (a *App) beginRefresh(total int) {
+	a.mu.Lock()
+	a.refreshTotal = total
+	a.refreshCompleted = 0
+	a.refreshStarted = time.Now()
+	cleared := clearTransientWatchErrors(a.state.Watches)
+	a.mu.Unlock()
+	if cleared != 0 {
+		log.Printf("electrum recovery: cleared %d stale per-watch connection errors", cleared)
+	}
+}
+
+func (a *App) updateRefresh(completed int, err error) {
+	a.mu.Lock()
+	a.refreshCompleted = completed
+	if err == nil {
+		a.electrsUnavailable = false
+	} else if electrum.IsUnavailable(err) {
+		a.electrsUnavailable = true
+	}
+	a.mu.Unlock()
+}
+
+func (a *App) endRefresh() time.Duration {
+	a.mu.Lock()
+	duration := time.Since(a.refreshStarted)
+	a.refreshTotal = 0
+	a.refreshCompleted = 0
+	a.refreshStarted = time.Time{}
+	a.mu.Unlock()
+	return duration
+}
+
+func clearTransientWatchErrors(watches []Watch) int {
+	cleared := 0
+	for index := range watches {
+		if isTransientElectrumErrorMessage(watches[index].LastError) {
+			watches[index].LastError = ""
+			cleared++
+		}
+	}
+	return cleared
+}
+
+func isTransientElectrumErrorMessage(message string) bool {
+	for _, prefix := range []string{
+		"connect to electrs:",
+		"electrs unavailable:",
+		"electrum connection closed",
+		"electrum connection is closed",
+		"read electrum response:",
+		"write electrum request:",
+	} {
+		if strings.HasPrefix(message, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) pollLoop() {
@@ -1715,8 +1796,12 @@ type pollResult struct {
 }
 
 const (
-	largeRefreshThreshold = 1_000
-	largeRefreshPace      = 20 * time.Millisecond
+	largeRefreshThreshold     = 1_000
+	largeRefreshPace          = 20 * time.Millisecond
+	refreshCheckpointSize     = 500
+	maxConsecutiveUnavailable = 8
+	snapshotTimeout           = 30 * time.Second
+	refreshHeartbeat          = 30 * time.Second
 )
 
 // poll refreshes every watch when scriptHashes is nil. Subscription wake-ups
@@ -1731,6 +1816,11 @@ func (a *App) poll(scriptHashes []string) {
 	watches := watchesForPoll(allWatches, scriptHashes)
 	if len(watches) == 0 {
 		return
+	}
+	a.beginRefresh(len(watches))
+	largeRefresh := len(watches) > largeRefreshThreshold
+	if largeRefresh {
+		log.Printf("electrum refresh started: %d watched scripts, paced at up to %d per second", len(watches), int(time.Second/largeRefreshPace))
 	}
 
 	targetGroups := make(map[string]struct{}, len(watches))
@@ -1774,33 +1864,124 @@ func (a *App) poll(scriptHashes []string) {
 		workerCount = len(watches)
 	}
 	jobs := make(chan Watch)
-	results := make(chan pollResult, len(watches))
+	results := make(chan pollResult, workerCount)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
 	for worker := 0; worker < workerCount; worker++ {
 		go func() {
+			defer workers.Done()
 			for watch := range jobs {
 				results <- a.fetchWatch(watch, groupScripts, eventVersions, groupKnown, groupInitialized)
 			}
 		}()
 	}
-	var pace *time.Ticker
-	if len(watches) > largeRefreshThreshold {
-		pace = time.NewTicker(largeRefreshPace)
-		defer pace.Stop()
-		log.Printf("electrum refresh: pacing %d watched scripts at up to %d per second", len(watches), int(time.Second/largeRefreshPace))
-	}
-	for index, watch := range watches {
-		if pace != nil && index != 0 {
-			<-pace.C
+	stopDispatch := make(chan struct{})
+	var stopDispatchOnce sync.Once
+	go func() {
+		defer close(jobs)
+		var pace *time.Ticker
+		if largeRefresh {
+			pace = time.NewTicker(largeRefreshPace)
+			defer pace.Stop()
 		}
-		jobs <- watch
-	}
-	close(jobs)
-	pollResults := make([]pollResult, 0, len(watches))
-	for range watches {
-		pollResults = append(pollResults, <-results)
-	}
+		for index, watch := range watches {
+			if pace != nil && index != 0 {
+				select {
+				case <-stopDispatch:
+					return
+				case <-pace.C:
+				}
+			}
+			select {
+			case <-stopDispatch:
+				return
+			case jobs <- watch:
+			}
+		}
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
 
+	checkpoint := make([]pollResult, 0, refreshCheckpointSize)
+	updated, unchanged, failed, unavailable := 0, 0, 0, 0
+	completed, consecutiveUnavailable := 0, 0
+	dispatchStopped := false
+	progressStep := len(watches) / 10
+	if progressStep < 500 {
+		progressStep = 500
+	}
+	nextProgress := progressStep
+	heartbeat := time.NewTicker(refreshHeartbeat)
+	defer heartbeat.Stop()
+	for results != nil {
+		var result pollResult
+		select {
+		case received, open := <-results:
+			if !open {
+				results = nil
+				continue
+			}
+			result = received
+		case <-heartbeat.C:
+			if largeRefresh {
+				log.Printf("electrum refresh still running: %d/%d watched scripts checked", completed, len(watches))
+			}
+			continue
+		}
+		completed++
+		checkpoint = append(checkpoint, result)
+		switch {
+		case result.err != nil && electrum.IsUnavailable(result.err):
+			unavailable++
+			consecutiveUnavailable++
+		case result.err != nil:
+			failed++
+			consecutiveUnavailable = 0
+		case result.unchanged:
+			unchanged++
+			consecutiveUnavailable = 0
+		default:
+			updated++
+			consecutiveUnavailable = 0
+		}
+		if consecutiveUnavailable >= maxConsecutiveUnavailable && !dispatchStopped {
+			stopDispatchOnce.Do(func() { close(stopDispatch) })
+			dispatchStopped = true
+			log.Printf("electrum refresh paused after %d consecutive connection failures; unfinished watches will retry automatically", consecutiveUnavailable)
+		}
+		if len(checkpoint) >= refreshCheckpointSize {
+			a.applyPollResults(checkpoint, groupScriptAddresses, false)
+			checkpoint = checkpoint[:0]
+		}
+		a.updateRefresh(completed, result.err)
+		if largeRefresh && (completed >= nextProgress || completed == len(watches)) {
+			log.Printf("electrum refresh progress: %d/%d watched scripts checked", completed, len(watches))
+			nextProgress += progressStep
+		}
+	}
+	unattempted := len(watches) - completed
+	a.applyPollResults(checkpoint, groupScriptAddresses, unattempted == 0)
+	deferred := unavailable + unattempted
+
+	if unavailable != 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		err := a.client.Ping(ctx)
+		cancel()
+		a.setElectrsUnavailable(err != nil)
+		log.Printf("electrum temporarily unavailable for %d watched scripts; %d additional watches were left for the next retry", unavailable, unattempted)
+	}
+	duration := a.endRefresh().Round(time.Second)
+	if largeRefresh || failed != 0 || deferred != 0 {
+		log.Printf("electrum refresh complete: %d/%d watched scripts checked in %s (%d updated, %d unchanged, %d failed, %d deferred)", completed, len(watches), duration, updated, unchanged, failed, deferred)
+	}
+	a.deliverPending()
+}
+
+func (a *App) applyPollResults(pollResults []pollResult, groupScriptAddresses map[string]map[string]string, finalize bool) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	watchIndexes := make(map[string]int, len(a.state.Watches))
 	for index := range a.state.Watches {
 		watchIndexes[a.state.Watches[index].ID] = index
@@ -1813,6 +1994,10 @@ func (a *App) poll(scriptHashes []string) {
 		current := &a.state.Watches[i]
 		current.LastChecked = result.checkedAt
 		if result.err != nil {
+			if electrum.IsUnavailable(result.err) {
+				current.LastError = ""
+				continue
+			}
 			current.LastError = result.err.Error()
 			log.Printf("poll %s: %v", result.watch.Label, result.err)
 			continue
@@ -1889,14 +2074,14 @@ func (a *App) poll(scriptHashes []string) {
 		current.LastTxID, current.LastTxHeight, current.LastTxAt = result.lastTxID, result.lastTxHeight, result.lastTxAt
 		current.Initialized, current.LastError = true, ""
 	}
-	if err := a.expandDiscoveryLocked(); err != nil {
-		log.Printf("smart discovery: %v", err)
+	if finalize {
+		if err := a.expandDiscoveryLocked(); err != nil {
+			log.Printf("smart discovery: %v", err)
+		}
 	}
 	if err := a.saveLocked(); err != nil {
-		log.Printf("save smart discovery: %v", err)
+		log.Printf("save refresh checkpoint: %v", err)
 	}
-	a.mu.Unlock()
-	a.deliverPending()
 }
 
 func watchesForPoll(watches []Watch, scriptHashes []string) []Watch {
@@ -1961,14 +2146,14 @@ func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVer
 		groupID = watch.ID
 	}
 	result := pollResult{watch: watch, groupID: groupID, effects: make(map[string]electrum.Effect), eventTimes: make(map[string]time.Time), notifyNew: make(map[string]bool), lastTxID: watch.LastTxID, lastTxHeight: watch.LastTxHeight, lastTxAt: watch.LastTxAt, checkedAt: time.Now().UTC()}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
 	knownStatus := watch.ElectrumStatus
 	if watchNeedsEventDetails(watch, eventVersions) {
 		knownStatus = nil
 	}
+	snapshotCtx, snapshotCancel := context.WithTimeout(context.Background(), snapshotTimeout)
 	var available bool
-	result.snapshot, available, result.err = a.client.SnapshotSince(ctx, watch.ScriptHash, knownStatus)
+	result.snapshot, available, result.err = a.client.SnapshotSince(snapshotCtx, watch.ScriptHash, knownStatus)
+	snapshotCancel()
 	if result.err != nil {
 		return result
 	}
@@ -1976,6 +2161,8 @@ func (a *App) fetchWatch(watch Watch, groupScripts map[string][][]byte, eventVer
 		result.unchanged = true
 		return result
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	if latest, ok := latestHistory(result.snapshot.History); ok {
 		result.lastTxID, result.lastTxHeight = latest.TxHash, latest.Height
 		if latest.TxHash != watch.LastTxID || latest.Height != watch.LastTxHeight || watch.LastTxAt.IsZero() {
@@ -2804,6 +2991,9 @@ func (a *App) load() error {
 	}
 	if err := json.Unmarshal(b, &a.state); err != nil {
 		return fmt.Errorf("decode state: %w", err)
+	}
+	if cleared := clearTransientWatchErrors(a.state.Watches); cleared != 0 {
+		log.Printf("electrum recovery: ignored %d stale per-watch connection errors from the previous run", cleared)
 	}
 	return nil
 }

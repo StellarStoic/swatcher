@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -30,6 +31,28 @@ func TestBlockTimeFromHeader(t *testing.T) {
 	}
 	if _, err := blockTimeFromHeader("00"); err == nil {
 		t.Fatal("short block header was accepted")
+	}
+}
+
+func TestUnavailableErrorClassification(t *testing.T) {
+	if !IsUnavailable(unavailable(errors.New("connection refused"))) {
+		t.Fatal("connection failure was not classified as unavailable")
+	}
+	if IsUnavailable(rpcError{code: -1, message: "bad request"}) {
+		t.Fatal("script-specific RPC error was classified as service unavailable")
+	}
+}
+
+func TestSnapshotTimeoutIsServiceUnavailable(t *testing.T) {
+	server := newTestElectrumServer(t)
+	server.stall("blockchain.scripthash.subscribe")
+	client := &Client{Address: server.address()}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	_, _, err := client.SnapshotSince(ctx, "script-hash", nil)
+	if !IsUnavailable(err) {
+		t.Fatalf("timeout error = %v, want service unavailable", err)
 	}
 }
 
@@ -323,6 +346,7 @@ type testElectrumServer struct {
 	violations  []string
 	status      string
 	balance     int64
+	stallMethod string
 
 	writeMu sync.Mutex
 }
@@ -389,11 +413,14 @@ func (s *testElectrumServer) serve(conn net.Conn) {
 
 		s.mu.Lock()
 		s.methods[request.Method]++
-		status, balance := s.status, s.balance
+		status, balance, stallMethod := s.status, s.balance, s.stallMethod
 		if (request.Method == "blockchain.scripthash.get_history" || request.Method == "blockchain.scripthash.get_balance") && !subscribed[scriptHash] {
 			s.violations = append(s.violations, request.Method)
 		}
 		s.mu.Unlock()
+		if request.Method == stallMethod {
+			continue
+		}
 
 		var result any
 		switch request.Method {
@@ -420,6 +447,12 @@ func (s *testElectrumServer) setState(status string, balance int64) {
 	s.mu.Lock()
 	s.status = status
 	s.balance = balance
+	s.mu.Unlock()
+}
+
+func (s *testElectrumServer) stall(method string) {
+	s.mu.Lock()
+	s.stallMethod = method
 	s.mu.Unlock()
 }
 
