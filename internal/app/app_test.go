@@ -46,6 +46,12 @@ func multipartWatchRequest(t *testing.T, values url.Values) *http.Request {
 	return request
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
 func TestDirection(t *testing.T) {
 	tests := []struct {
 		effect electrum.Effect
@@ -124,6 +130,36 @@ func TestNotificationScheduleHelpers(t *testing.T) {
 	)
 	if !strings.Contains(message, "**s/watcher daily digest**") || !strings.Contains(message, "**Activities:** 1") || !strings.Contains(message, "donations / website") || !strings.Contains(message, "42 sat") {
 		t.Fatalf("unexpected digest: %s", message)
+	}
+}
+
+func TestPollTickDeliversPendingNotificationWhenNoWatchNeedsRefresh(t *testing.T) {
+	a, err := New(t.TempDir(), "127.0.0.1:1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.state.Groups = []WatchGroup{{ID: "group", Label: "savings"}}
+	a.state.Events = []Event{{GroupID: "group", TxID: "transaction", Direction: "received", Received: 42, Net: 42, NostrSent: true}}
+	config, err := json.Marshal(notify.Config{TelegramEnabled: true, TelegramToken: "token", TelegramChatID: "chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.notifier.Path, config, 0600); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	a.notifier.HTTP = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: http.NoBody, Request: request}, nil
+	})}
+
+	a.pollTick()
+
+	if requests != 1 {
+		t.Fatalf("Telegram requests = %d, want 1", requests)
+	}
+	if !a.state.Events[0].TelegramSent {
+		t.Fatal("idle timer did not mark the pending notification as delivered")
 	}
 }
 

@@ -1752,10 +1752,7 @@ func (a *App) pollLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			scriptHashes := a.scriptHashesNeedingRefresh()
-			if len(scriptHashes) != 0 {
-				a.poll(scriptHashes)
-			}
+			a.pollTick()
 		case <-changes:
 			scriptHashes := a.client.TakeChanges()
 			if len(scriptHashes) != 0 {
@@ -1763,6 +1760,15 @@ func (a *App) pollLoop() {
 			}
 		}
 	}
+}
+
+func (a *App) pollTick() {
+	scriptHashes := a.scriptHashesNeedingRefresh()
+	if len(scriptHashes) != 0 {
+		a.poll(scriptHashes)
+		return
+	}
+	a.deliverPending()
 }
 
 func (a *App) scriptHashesNeedingRefresh() []string {
