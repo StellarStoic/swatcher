@@ -450,6 +450,28 @@ func (c *Client) invalidate(s *session, err error) {
 	s.close(err)
 }
 
+// ResetSubscriptions closes the current Electrum session and forgets its
+// subscription cache. Electrum does not expose a script-hash unsubscribe RPC,
+// so reconnecting is the only way to release scripts that the user removed
+// from a watch without restarting s/watcher.
+func (c *Client) ResetSubscriptions() {
+	c.mu.Lock()
+	s := c.session
+	c.session = nil
+	c.mu.Unlock()
+	if s != nil {
+		s.close(unavailable(errors.New("electrum subscriptions reset")))
+	}
+
+	c.subscriptionsMu.Lock()
+	c.subscriptions = make(map[string]*subscription)
+	c.subscriptionsMu.Unlock()
+
+	c.changesMu.Lock()
+	c.changed = make(map[string]struct{})
+	c.changesMu.Unlock()
+}
+
 func (c *Client) subscription(scriptHash string) *subscription {
 	c.subscriptionsMu.Lock()
 	defer c.subscriptionsMu.Unlock()
